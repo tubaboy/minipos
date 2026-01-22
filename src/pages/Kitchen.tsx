@@ -23,7 +23,6 @@ interface Order {
 
 export default function Kitchen() {
   const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {

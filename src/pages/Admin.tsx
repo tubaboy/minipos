@@ -1,5 +1,3 @@
-import React, { useState } from 'react';
-import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Users, 
@@ -9,7 +7,6 @@ import {
   LogOut,
   ChevronRight,
   TrendingUp,
-  Package,
   ShoppingBag,
   Users2
 } from 'lucide-react';
