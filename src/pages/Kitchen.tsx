@@ -60,7 +60,6 @@ export default function Kitchen() {
 
     if (error) console.error('Fetch error:', error);
     else setOrders(data || []);
-    setLoading(false);
   }
 
   async function updateStatus(orderId: string, status: Order['status']) {

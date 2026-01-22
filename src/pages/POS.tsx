@@ -75,7 +75,7 @@ export default function POS() {
   }
 
   async function fetchOrders() {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('orders')
       .select('*, order_items(*)')
       .eq('tenant_id', tenantId)
