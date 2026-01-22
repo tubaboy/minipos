@@ -1,0 +1,211 @@
+import React, { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+import { cn } from '@/lib/utils';
+import { CheckCircle2, Clock, PlayCircle, LogOut, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+
+interface OrderItem {
+  id: string;
+  product_name: string;
+  quantity: number;
+  notes?: string;
+}
+
+interface Order {
+  id: string;
+  order_number: string;
+  status: 'pending' | 'processing' | 'completed' | 'closed';
+  type: 'dine_in' | 'take_out';
+  table_number?: string;
+  created_at: string;
+  order_items: OrderItem[];
+}
+
+export default function Kitchen() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    fetchOrders();
+
+    // Subscribe to realtime changes for both orders and order_items
+    const channel = supabase
+      .channel('kitchen_orders_channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        () => fetchOrders()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'order_items' },
+        () => fetchOrders()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  async function fetchOrders() {
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        order_items (*)
+      `)
+      .in('status', ['pending', 'processing', 'completed'])
+      .order('created_at', { ascending: true });
+
+    if (error) console.error('Fetch error:', error);
+    else setOrders(data || []);
+    setLoading(false);
+  }
+
+  async function updateStatus(orderId: string, status: Order['status']) {
+    const { error } = await supabase
+      .from('orders')
+      .update({ status })
+      .eq('id', orderId);
+
+    if (error) alert('更新失敗');
+  }
+
+  const pendingOrders = orders.filter(o => o.status === 'pending');
+  const processingOrders = orders.filter(o => o.status === 'processing');
+  const completedOrders = orders.filter(o => o.status === 'completed');
+
+  return (
+    <div className="h-screen bg-[#1E1B4B] flex flex-col font-['Plus_Jakarta_Sans'] text-white">
+      {/* Header */}
+      <header className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between backdrop-blur-md">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+            <Clock className="w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-bold">廚房接單系統 KDS</h1>
+        </div>
+        
+        <div className="flex items-center gap-6">
+          <div className="flex gap-4 text-sm font-bold">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
+              <span>待確認: {pendingOrders.length}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse" />
+              <span>處理中: {processingOrders.length}</span>
+            </div>
+          </div>
+          <button 
+            onClick={() => navigate('/login')}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+          >
+            <LogOut className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
+
+      {/* Main Kanban Board */}
+      <main className="flex-1 overflow-hidden flex p-6 gap-6">
+        {/* Column: Pending */}
+        <section className="flex-1 flex flex-col gap-4 min-w-[350px]">
+          <div className="flex items-center gap-2 text-amber-500 font-black uppercase tracking-widest text-sm mb-2">
+            <RefreshCw className="w-4 h-4 animate-spin-slow" />
+            待確認訂單
+          </div>
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+            {pendingOrders.map(order => (
+              <OrderCard key={order.id} order={order} onAction={() => updateStatus(order.id, 'processing')} actionLabel="接單" actionIcon={<PlayCircle className="w-5 h-5" />} actionColor="bg-amber-500" />
+            ))}
+          </div>
+        </section>
+
+        {/* Column: Processing */}
+        <section className="flex-1 flex flex-col gap-4 min-w-[350px] border-x border-white/5 px-6">
+          <div className="flex items-center gap-2 text-blue-400 font-black uppercase tracking-widest text-sm mb-2">
+            <Clock className="w-4 h-4" />
+            處理中
+          </div>
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+            {processingOrders.map(order => (
+              <OrderCard key={order.id} order={order} onAction={() => updateStatus(order.id, 'completed')} actionLabel="完成" actionIcon={<CheckCircle2 className="w-5 h-5" />} actionColor="bg-blue-500" />
+            ))}
+          </div>
+        </section>
+
+        {/* Column: Completed */}
+        <section className="flex-1 flex flex-col gap-4 min-w-[350px]">
+          <div className="flex items-center gap-2 text-emerald-400 font-black uppercase tracking-widest text-sm mb-2">
+            <CheckCircle2 className="w-4 h-4" />
+            已完成 (待出餐)
+          </div>
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+            {completedOrders.map(order => (
+              <OrderCard 
+                key={order.id} 
+                order={order} 
+                // No action for kitchen on completed orders
+                onAction={() => {}} 
+                actionLabel="待出餐" 
+                actionIcon={<CheckCircle2 className="w-5 h-5" />} 
+                actionColor="bg-emerald-500/50 cursor-default hover:brightness-100 active:scale-100" 
+              />
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function OrderCard({ order, onAction, actionLabel, actionIcon, actionColor }: { order: Order, onAction: () => void, actionLabel: string, actionIcon: React.ReactNode, actionColor: string }) {
+  const timeElapsed = Math.floor((new Date().getTime() - new Date(order.created_at).getTime()) / 60000);
+  
+  return (
+    <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl overflow-hidden hover:border-white/20 transition-all">
+      <div className="p-4 bg-white/5 flex items-center justify-between border-b border-white/5">
+        <div>
+          <span className="text-xs font-bold text-white/40 uppercase tracking-tighter">Order</span>
+          <p className="text-lg font-black tracking-tighter">{order.order_number}</p>
+        </div>
+        <div className="text-right">
+          <span className={cn(
+            "px-2 py-1 rounded text-[10px] font-black uppercase",
+            order.type === 'dine_in' ? "bg-primary text-white" : "bg-white text-black"
+          )}>
+            {order.type === 'dine_in' ? `桌號: ${order.table_number}` : '外帶'}
+          </span>
+          <p className="text-xs mt-1 text-white/40 font-bold">{timeElapsed} 分鐘前</p>
+        </div>
+      </div>
+      
+      <div className="p-4 space-y-3">
+        {order.order_items.map(item => (
+          <div key={item.id} className="flex items-start gap-3">
+            <span className="bg-white/10 w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm">
+              {item.quantity}
+            </span>
+            <div className="flex-1">
+              <p className="font-bold text-lg">{item.product_name}</p>
+              {item.notes && <p className="text-xs text-amber-400 font-semibold">{item.notes}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={onAction}
+        className={cn(
+          "w-full py-4 flex items-center justify-center gap-2 font-black uppercase tracking-widest text-sm hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer",
+          actionColor
+        )}
+      >
+        {actionIcon}
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
