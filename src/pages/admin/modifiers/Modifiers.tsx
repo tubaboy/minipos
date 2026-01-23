@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Plus, Settings2, Trash2, Edit2, X, ChevronRight, PlusCircle, Check } from 'lucide-react';
+import { Plus, Settings2, Trash2, Edit2, X, PlusCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 
 type ModifierOption = {
   id: string;

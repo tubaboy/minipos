@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Lock, ArrowRight, AlertCircle, Store } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { LayoutDashboard, ArrowRight, Store } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AdminLogin() {
@@ -10,7 +9,6 @@ export default function AdminLogin() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
 
   // Redirect if already logged in (check for session)
   useEffect(() => {

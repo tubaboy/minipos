@@ -1,14 +1,8 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { 
-  Plus, 
-  Coffee, 
-  Tag, 
-  Edit2, 
   Search,
   Filter,
   Image as ImageIcon,
-  CheckCircle2,
   XCircle,
   LayoutGrid,
   List,
@@ -55,9 +49,7 @@ export default function Products() {
   const [isEditing, setIsEditing] = useState(false);
   const [currentProduct, setCurrentProduct] = useState<Partial<Product> | null>(null);
   const [selectedModifierIds, setSelectedModifierIds] = useState<string[]>([]);
-  const [loadingModifiers, setLoadingModifiers] = useState(false);
   const [saving, setSaving] = useState(false);
-
   useEffect(() => {
     fetchInitialData();
   }, []);

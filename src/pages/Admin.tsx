@@ -4,7 +4,6 @@ import {
   Users, 
   Coffee, 
   BarChart3, 
-  History, 
   LogOut,
   ChevronRight,
   TrendingUp,

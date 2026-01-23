@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Plus, Tag, Trash2, Edit2, X, ChevronRight } from 'lucide-react';
+import { Plus, Tag, Trash2, Edit2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Category = {
