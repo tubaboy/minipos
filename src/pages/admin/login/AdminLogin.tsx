@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { LayoutDashboard, ArrowRight, Store } from 'lucide-react';
 import { toast } from 'sonner';
 

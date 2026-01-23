@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import {
+import { 
+  Plus, 
+  Coffee, 
+  Tag, 
+  Edit2, 
   Search,
   Filter,
   Image as ImageIcon,
@@ -50,7 +54,9 @@ export default function Products() {
   const [isEditing, setIsEditing] = useState(false);
   const [currentProduct, setCurrentProduct] = useState<Partial<Product> | null>(null);
   const [selectedModifierIds, setSelectedModifierIds] = useState<string[]>([]);
+  const [loadingModifiers, setLoadingModifiers] = useState(false);
   const [saving, setSaving] = useState(false);
+
   useEffect(() => {
     fetchInitialData();
   }, []);
@@ -308,7 +314,11 @@ export default function Products() {
               </div>
 
               <div className="space-y-3 pt-4 border-t border-slate-50">
-                <label className="text-xs font-black text-slate-400 uppercase ml-1">適用自定義選項</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black text-slate-400 uppercase ml-1">適用自定義選項</label>
+                  {loadingModifiers && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
+                </div>
+                
                 {modifierGroups.length === 0 ? (
                   <p className="text-xs text-slate-400 font-bold italic">尚無自定義選項群組</p>
                 ) : (
@@ -335,7 +345,7 @@ export default function Products() {
 
               <div className="flex gap-4 pt-6">
                 <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black">取消</button>
-                <button type="submit" disabled={saving} className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg flex items-center justify-center gap-2">
+                <button type="submit" disabled={saving || loadingModifiers} className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg flex items-center justify-center gap-2">
                   {saving && <Loader2 className="w-5 h-5 animate-spin" />} 儲存商品
                 </button>
               </div>
