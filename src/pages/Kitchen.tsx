@@ -9,6 +9,10 @@ interface OrderItem {
   product_name: string;
   quantity: number;
   notes?: string;
+  modifiers?: {
+    group_name: string;
+    option_name: string;
+  }[];
 }
 
 interface Order {
@@ -25,7 +29,17 @@ export default function Kitchen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const navigate = useNavigate();
 
+  // Load employee session
+  const employeeData = localStorage.getItem('minipos_employee');
+  const employee = employeeData ? JSON.parse(employeeData) : null;
+  const storeId = employee?.store_id;
+
   useEffect(() => {
+    if (!employee) {
+      navigate('/login');
+      return;
+    }
+
     fetchOrders();
 
     // Subscribe to realtime changes for both orders and order_items
@@ -33,12 +47,12 @@ export default function Kitchen() {
       .channel('kitchen_orders_channel')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders' },
+        { event: '*', schema: 'public', table: 'orders', filter: `store_id=eq.${storeId}` },
         () => fetchOrders()
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'order_items' },
+        { event: '*', schema: 'public', table: 'order_items' }, // Order items don't strictly need filtering if orders are filtered, but good to keep in mind
         () => fetchOrders()
       )
       .subscribe();
@@ -49,12 +63,15 @@ export default function Kitchen() {
   }, []);
 
   async function fetchOrders() {
+    if (!storeId) return;
+
     const { data, error } = await supabase
       .from('orders')
       .select(`
         *,
         order_items (*)
       `)
+      .eq('store_id', storeId) // Filter by store
       .in('status', ['pending', 'processing', 'completed'])
       .order('created_at', { ascending: true });
 
@@ -75,15 +92,22 @@ export default function Kitchen() {
   const processingOrders = orders.filter(o => o.status === 'processing');
   const completedOrders = orders.filter(o => o.status === 'completed');
 
+  const storeName = localStorage.getItem('minipos_store_name');
+
   return (
-    <div className="h-screen bg-[#1E1B4B] flex flex-col font-['Plus_Jakarta_Sans'] text-white">
+    <div className="h-screen bg-[#1E1B4B] flex flex-col font-sans text-white">
       {/* Header */}
       <header className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between backdrop-blur-md">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
-            <Clock className="w-6 h-6" />
+            <Clock className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-xl font-bold">廚房接單系統 KDS</h1>
+          <div>
+            <h1 className="text-xl font-bold">{storeName} 廚房接單系統</h1>
+            <p className="text-xs text-white/40 font-bold uppercase tracking-widest">
+              {employee?.name} (職位: {employee?.role === 'store_manager' ? '店長' : '廚務'})
+            </p>
+          </div>
         </div>
         
         <div className="flex items-center gap-6">
@@ -160,13 +184,32 @@ export default function Kitchen() {
 }
 
 function OrderCard({ order, onAction, actionLabel, actionIcon, actionColor }: { order: Order, onAction: () => void, actionLabel: string, actionIcon: React.ReactNode, actionColor: string }) {
-  const timeElapsed = Math.floor((new Date().getTime() - new Date(order.created_at).getTime()) / 60000);
+  const [now, setNow] = useState(new Date().getTime());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date().getTime()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const timeElapsed = Math.floor((now - new Date(order.created_at).getTime()) / 60000);
+  const isUrgent = timeElapsed >= 15 && order.status !== 'completed';
   
   return (
-    <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl overflow-hidden hover:border-white/20 transition-all">
-      <div className="p-4 bg-white/5 flex items-center justify-between border-b border-white/5">
+    <div className={cn(
+      "bg-white/10 backdrop-blur-md border rounded-2xl overflow-hidden transition-all duration-500",
+      isUrgent 
+        ? "border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-pulse" 
+        : "border-white/10 hover:border-white/20 shadow-none"
+    )}>
+      <div className={cn(
+        "p-4 flex items-center justify-between border-b",
+        isUrgent ? "bg-red-500/20 border-red-500/20" : "bg-white/5 border-white/5"
+      )}>
         <div>
-          <span className="text-xs font-bold text-white/40 uppercase tracking-tighter">Order</span>
+          <span className={cn(
+            "text-xs font-bold uppercase tracking-tighter",
+            isUrgent ? "text-red-300" : "text-white/40"
+          )}>Order</span>
           <p className="text-lg font-black tracking-tighter">{order.order_number}</p>
         </div>
         <div className="text-right">
@@ -176,19 +219,34 @@ function OrderCard({ order, onAction, actionLabel, actionIcon, actionColor }: { 
           )}>
             {order.type === 'dine_in' ? `桌號: ${order.table_number}` : '外帶'}
           </span>
-          <p className="text-xs mt-1 text-white/40 font-bold">{timeElapsed} 分鐘前</p>
+          <p className={cn(
+            "text-xs mt-1 font-bold transition-colors",
+            isUrgent ? "text-red-400" : "text-white/40"
+          )}>
+            {isUrgent && "逾時 "}
+            {timeElapsed} 分鐘前
+          </p>
         </div>
       </div>
       
       <div className="p-4 space-y-3">
         {order.order_items.map(item => (
           <div key={item.id} className="flex items-start gap-3">
-            <span className="bg-white/10 w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm">
+            <span className="bg-white/10 w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">
               {item.quantity}
             </span>
             <div className="flex-1">
-              <p className="font-bold text-lg">{item.product_name}</p>
-              {item.notes && <p className="text-xs text-amber-400 font-semibold">{item.notes}</p>}
+              <p className="font-bold text-lg leading-tight">{item.product_name}</p>
+              {item.modifiers && item.modifiers.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {item.modifiers.map((m, idx) => (
+                    <span key={idx} className="text-[10px] bg-white/10 px-1.5 py-0.5 rounded text-white/70">
+                      {m.option_name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {item.notes && <p className="text-xs text-amber-400 font-semibold mt-1">{item.notes}</p>}
             </div>
           </div>
         ))}

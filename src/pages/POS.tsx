@@ -1,14 +1,28 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { cn, formatCurrency } from '@/lib/utils';
-import { ShoppingCart, User, LogOut, ChevronRight, Plus, Minus, Trash2, Send, CheckCircle2, PlayCircle, Clock } from 'lucide-react';
+import { ShoppingCart, User, LogOut, ChevronRight, Plus, Minus, Trash2, Send, CheckCircle2, PlayCircle, Clock, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+
+interface ModifierOption {
+  id: string;
+  name: string;
+  extra_price: number;
+}
+
+interface ModifierGroup {
+  id: string;
+  name: string;
+  options: ModifierOption[];
+}
 
 interface Product {
   id: string;
   name: string;
   price: number;
   category_id: string;
+  modifier_groups?: ModifierGroup[];
 }
 
 interface Category {
@@ -16,8 +30,18 @@ interface Category {
   name: string;
 }
 
+interface SelectedModifier {
+  group_id: string;
+  group_name: string;
+  option_id: string;
+  option_name: string;
+  price: number;
+}
+
 interface CartItem extends Product {
   quantity: number;
+  selectedModifiers: SelectedModifier[];
+  uuid: string; // Unique ID for cart item (product + modifiers)
 }
 
 export default function POS() {
@@ -29,20 +53,36 @@ export default function POS() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orderType, setOrderType] = useState<'dine_in' | 'take_out'>('dine_in');
   const [tableNumber, setTableNumber] = useState('');
+  
+  // Modifier Modal State
+  const [isModifierModalOpen, setIsModifierModalOpen] = useState(false);
+  const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
+  const [tempModifiers, setTempModifiers] = useState<SelectedModifier[]>([]);
+
   const navigate = useNavigate();
 
-  const tenantId = '00000000-0000-0000-0000-000000000001'; // Mock tenant
+  // Load employee session
+  const employeeData = localStorage.getItem('minipos_employee');
+  const employee = employeeData ? JSON.parse(employeeData) : null;
+  
+  // Use real tenant_id from employee, or fallback
+  const tenantId = employee?.tenant_id;
+  const storeId = employee?.store_id;
 
   useEffect(() => {
+    if (!employee) {
+      navigate('/login');
+      return;
+    }
+
     fetchData();
     if (activeTab === 'history') {
       fetchOrders();
     }
 
-    // Subscribe to realtime for orders
     const channel = supabase
       .channel('pos_orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `store_id=eq.${storeId}` }, () => {
         fetchOrders();
       })
       .subscribe();
@@ -50,35 +90,70 @@ export default function POS() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [activeTab]);
+  }, [activeTab, tenantId]);
 
   async function fetchData() {
-    const { data: catData, error: catError } = await supabase
+    if (!tenantId) return;
+
+    // 1. Fetch Categories
+    const { data: catData } = await supabase
       .from('categories')
       .select('*')
       .eq('tenant_id', tenantId)
       .order('sort_order');
     
-    const { data: prodData, error: prodError } = await supabase
+    // 2. Fetch Products
+    const { data: prodData } = await supabase
       .from('products')
       .select('*')
       .eq('tenant_id', tenantId);
 
-    if (catError) console.error('Categories fetch error:', catError);
-    if (prodError) console.error('Products fetch error:', prodError);
+    // 3. Fetch Modifiers Structure (Groups -> Options)
+    const { data: modGroups } = await supabase
+      .from('modifier_groups')
+      .select('*, modifier_options(*)')
+      .eq('tenant_id', tenantId);
+
+    // 4. Fetch Product <-> Modifier links
+    const { data: prodModLinks } = await supabase
+      .from('product_modifier_groups')
+      .select('*');
 
     if (catData) {
       setCategories(catData);
       if (catData.length > 0 && !selectedCategory) setSelectedCategory(catData[0].id);
     }
-    if (prodData) setProducts(prodData);
+
+    if (prodData) {
+      // Map modifiers to products
+      const productsWithModifiers = prodData.map(p => {
+        const linkedGroupIds = prodModLinks
+          ?.filter(link => link.product_id === p.id)
+          .map(link => link.modifier_group_id);
+        
+        const groups = modGroups
+          ?.filter(g => linkedGroupIds?.includes(g.id))
+          .map(g => ({
+            id: g.id,
+            name: g.name,
+            options: g.modifier_options?.sort((a: any, b: any) => a.sort_order - b.sort_order) || []
+          }));
+
+        return { ...p, modifier_groups: groups || [] };
+      });
+
+      setProducts(productsWithModifiers);
+    }
   }
 
   async function fetchOrders() {
+    if (!tenantId) return;
+
     const { data } = await supabase
       .from('orders')
       .select('*, order_items(*)')
       .eq('tenant_id', tenantId)
+      .eq('store_id', storeId)
       .neq('status', 'closed')
       .order('created_at', { ascending: false });
     
@@ -91,23 +166,48 @@ export default function POS() {
       .update({ status: 'closed' })
       .eq('id', orderId);
     
-    if (error) alert('結單失敗');
-    else fetchOrders();
+    if (error) toast.error('結單失敗');
+    else {
+      toast.success('訂單已結單');
+      fetchOrders();
+    }
   };
 
-  const addToCart = (product: Product) => {
+  // --- Cart Logic with Modifiers ---
+
+  const handleProductClick = (product: Product) => {
+    if (product.modifier_groups && product.modifier_groups.length > 0) {
+      setCurrentProduct(product);
+      setTempModifiers([]);
+      setIsModifierModalOpen(true);
+    } else {
+      addToCart(product, []);
+    }
+  };
+
+  const addToCart = (product: Product, modifiers: SelectedModifier[]) => {
+    const modifierKey = modifiers
+      .sort((a, b) => a.group_id.localeCompare(b.group_id))
+      .map(m => m.option_id)
+      .join('|');
+    
+    const uuid = `${product.id}-${modifierKey}`;
+
     setCart(prev => {
-      const existing = prev.find(item => item.id === product.id);
+      const existing = prev.find(item => item.uuid === uuid);
       if (existing) {
-        return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item => item.uuid === uuid ? { ...item, quantity: item.quantity + 1 } : item);
       }
-      return [...prev, { ...product, quantity: 1 }];
+      return [...prev, { ...product, quantity: 1, selectedModifiers: modifiers, uuid }];
     });
+
+    setIsModifierModalOpen(false);
+    toast.success('已加入購物車');
   };
 
-  const updateQuantity = (id: string, delta: number) => {
+  const updateQuantity = (uuid: string, delta: number) => {
     setCart(prev => prev.map(item => {
-      if (item.id === id) {
+      if (item.uuid === uuid) {
         const newQty = Math.max(1, item.quantity + delta);
         return { ...item, quantity: newQty };
       }
@@ -115,28 +215,61 @@ export default function POS() {
     }));
   };
 
-  const removeItem = (id: string) => {
-    setCart(prev => prev.filter(item => item.id !== id));
+  const removeItem = (uuid: string) => {
+    setCart(prev => prev.filter(item => item.uuid !== uuid));
   };
 
-  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const calculateItemPrice = (item: CartItem) => {
+    const modifiersPrice = item.selectedModifiers.reduce((sum, m) => sum + m.price, 0);
+    return (item.price + modifiersPrice) * item.quantity;
+  };
+
+  const total = cart.reduce((sum, item) => sum + calculateItemPrice(item), 0);
+
+  // --- Modifier Modal Logic ---
+
+  const toggleModifier = (group: ModifierGroup, option: ModifierOption) => {
+    setTempModifiers(prev => {
+      // Check if this group is already selected (Single selection per group for now, or Multi? Usually single for Sugar/Ice)
+      // Let's assume Single Selection for Sugar/Ice types. 
+      // If we want multi-select (toppings), we need a flag on ModifierGroup 'allow_multiple'. 
+      // For now, let's enforce Single Selection per group to keep it simple as per schema didn't specify type.
+      // But typically, Sugar/Ice are single. Toppings are multi. 
+      // Let's assume ALL are single selection for this iteration to avoid complexity, or check if existing selection exists.
+      
+      const filtered = prev.filter(m => m.group_id !== group.id); // Remove existing choice for this group
+      return [...filtered, {
+        group_id: group.id,
+        group_name: group.name,
+        option_id: option.id,
+        option_name: option.name,
+        price: option.extra_price
+      }];
+    });
+  };
+
+  const handleConfirmModifiers = () => {
+    if (!currentProduct) return;
+    // Optional: Validate if all required groups are selected? We'll skip validation for now.
+    addToCart(currentProduct, tempModifiers);
+  };
+
+  // --- Submit Order ---
 
   const handleSubmitOrder = async () => {
     if (cart.length === 0) return;
     if (orderType === 'dine_in' && !tableNumber) {
-      alert('請輸入桌號');
+      toast.error('請輸入桌號');
       return;
     }
 
     try {
-      // 1. Generate order number using the RPC (we'll assume the generate_order_number works or we do it here)
       const { data: orderNumber, error: seqError } = await supabase.rpc('generate_order_number', { p_tenant_id: tenantId });
-      
       if (seqError) throw seqError;
 
-      // 2. Create Order
       const { data: order, error: orderError } = await supabase.from('orders').insert({
         tenant_id: tenantId,
+        store_id: storeId,
         order_number: orderNumber,
         type: orderType,
         table_number: tableNumber,
@@ -146,81 +279,98 @@ export default function POS() {
 
       if (orderError) throw orderError;
 
-      // 3. Create Order Items
-      const orderItems = cart.map(item => ({
-        tenant_id: tenantId,
-        order_id: order.id,
-        product_id: item.id,
-        product_name: item.name,
-        quantity: item.quantity,
-        price: item.price
-      }));
+      const orderItems = cart.map(item => {
+        const unitPrice = item.price + item.selectedModifiers.reduce((s, m) => s + m.price, 0);
+        return {
+          tenant_id: tenantId,
+          order_id: order.id,
+          product_id: item.id,
+          product_name: item.name,
+          quantity: item.quantity,
+          price: unitPrice, // Store final unit price including modifiers? Or base price? 
+          // Schema says 'price'. Usually snapshots the price at that moment.
+          // Let's store the full unit price.
+          modifiers: item.selectedModifiers // JSONB
+        };
+      });
 
       const { error: itemsError } = await supabase.from('order_items').insert(orderItems);
       if (itemsError) throw itemsError;
 
-      alert(`訂單已送出！編號：${orderNumber}`);
+      toast.success(`訂單已送出：${orderNumber}`);
       setCart([]);
       setTableNumber('');
     } catch (err: any) {
-      alert('送單失敗：' + err.message);
+      toast.error('送單失敗', { description: err.message });
     }
   };
 
   return (
-    <div className="h-screen bg-[#FAF5FF] flex flex-col md:flex-row overflow-hidden font-['Plus_Jakarta_Sans']">
+    <div className="h-screen bg-slate-50 flex flex-col md:flex-row overflow-hidden font-sans">
       {/* Category Sidebar */}
-      <aside className="w-full md:w-64 bg-white/80 backdrop-blur-md border-r border-primary/10 flex flex-col">
-        <div className="p-6 border-b border-primary/5 flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+      <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800 flex flex-col text-slate-300">
+        <div className="p-6 border-b border-slate-800 flex items-center gap-3">
+          <div className="w-10 h-10 bg-teal-600 rounded-lg flex items-center justify-center shadow-lg shadow-teal-900/20">
             <User className="text-white w-5 h-5" />
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">員工 001</p>
-            <p className="font-bold text-primary">櫃檯點餐</p>
+            <p className="text-xs text-slate-400 font-medium">{employee?.role === 'store_manager' ? '店長' : '員工'}</p>
+            <p className="font-bold text-white">{employee?.name || '未登入'}</p>
           </div>
         </div>
         
-        <nav className="flex-1 p-4 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-y-auto no-scrollbar">
-          <div className="mb-4 hidden md:block">
-            <p className="px-4 text-[10px] font-black text-primary/40 uppercase tracking-widest mb-2">系統功能</p>
+        <nav className="flex-1 p-4 flex flex-row md:flex-col gap-1 overflow-x-auto md:overflow-y-auto no-scrollbar">
+          <div className="mb-6 hidden md:block">
+            <p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">系統功能</p>
             <div className="space-y-1">
               <button 
                 onClick={() => setActiveTab('order')}
                 className={cn(
-                  "w-full px-4 py-3 rounded-xl text-left font-bold transition-all flex items-center gap-3 cursor-pointer",
-                  activeTab === 'order' ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-primary/60 hover:bg-primary/5"
+                  "w-full px-3 py-2.5 rounded-lg text-left font-medium transition-all flex items-center gap-3 cursor-pointer",
+                  activeTab === 'order' 
+                    ? "bg-teal-600 text-white shadow-lg shadow-teal-900/20" 
+                    : "text-slate-400 hover:bg-slate-800 hover:text-white"
                 )}
               >
-                <Plus className="w-5 h-5" /> 點餐頁面
+                <Plus className="w-4 h-4" /> <span className="text-sm">點餐頁面</span>
               </button>
               <button 
                 onClick={() => setActiveTab('history')}
                 className={cn(
-                  "w-full px-4 py-3 rounded-xl text-left font-bold transition-all flex items-center gap-3 cursor-pointer",
-                  activeTab === 'history' ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-primary/60 hover:bg-primary/5"
+                  "w-full px-3 py-2.5 rounded-lg text-left font-medium transition-all flex items-center gap-3 cursor-pointer",
+                  activeTab === 'history' 
+                    ? "bg-teal-600 text-white shadow-lg shadow-teal-900/20" 
+                    : "text-slate-400 hover:bg-slate-800 hover:text-white"
                 )}
               >
-                <ShoppingCart className="w-5 h-5" /> 訂單管理
+                <ShoppingCart className="w-4 h-4" /> <span className="text-sm">訂單管理</span>
               </button>
+              {employee?.role === 'store_manager' && (
+                <button 
+                  onClick={() => navigate('/admin')}
+                  className="w-full px-3 py-2.5 rounded-lg text-left font-medium transition-all flex items-center gap-3 cursor-pointer text-slate-400 hover:bg-slate-800 hover:text-white"
+                >
+                  <User className="w-4 h-4" /> <span className="text-sm">後台管理</span>
+                </button>
+              )}
             </div>
           </div>
 
-          <p className="px-4 text-[10px] font-black text-primary/40 uppercase tracking-widest mb-2 hidden md:block">商品分類</p>
+          <p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 hidden md:block">商品分類</p>
           {categories.map(cat => (
             <button
               key={cat.id}
               onClick={() => { setSelectedCategory(cat.id); setActiveTab('order'); }}
               className={cn(
-                "px-4 py-3 rounded-xl text-left transition-all whitespace-nowrap md:whitespace-normal flex items-center justify-between group cursor-pointer",
+                "px-3 py-2.5 rounded-lg text-left transition-all whitespace-nowrap md:whitespace-normal flex items-center justify-between group cursor-pointer",
                 selectedCategory === cat.id && activeTab === 'order'
-                  ? "bg-primary/10 text-primary border border-primary/20" 
-                  : "hover:bg-primary/5 text-primary/70"
+                  ? "bg-slate-800 text-teal-400 border border-slate-700" 
+                  : "hover:bg-slate-800/50 text-slate-400 hover:text-white"
               )}
             >
-              <span className="font-semibold">{cat.name}</span>
+              <span className="text-sm font-medium">{cat.name}</span>
               <ChevronRight className={cn(
-                "w-4 h-4 transition-transform hidden md:block",
+                "w-3.5 h-3.5 transition-transform hidden md:block",
                 selectedCategory === cat.id ? "translate-x-1" : "opacity-0 group-hover:opacity-100"
               )} />
             </button>
@@ -229,34 +379,38 @@ export default function POS() {
 
         <button 
           onClick={() => navigate('/login')}
-          className="m-4 p-3 flex items-center gap-3 text-destructive hover:bg-destructive/5 rounded-xl transition-colors cursor-pointer"
+          className="m-4 p-3 flex items-center gap-3 text-red-400 hover:bg-red-400/10 rounded-lg transition-colors cursor-pointer"
         >
-          <LogOut className="w-5 h-5" />
-          <span className="font-semibold">登出系統</span>
+          <LogOut className="w-4 h-4" />
+          <span className="text-sm font-medium">登出系統</span>
         </button>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col p-4 md:p-8 overflow-y-auto">
+      <main className="flex-1 flex flex-col p-4 md:p-8 overflow-y-auto bg-slate-50 relative">
         {activeTab === 'order' ? (
           <>
             <header className="mb-8 flex items-center justify-between">
-              <h2 className="text-3xl font-bold text-primary">
-                {categories.find(c => c.id === selectedCategory)?.name || '商品項目'}
-              </h2>
-              <div className="flex bg-white p-1 rounded-xl border border-primary/10">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
+                  {categories.find(c => c.id === selectedCategory)?.name || '商品項目'}
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">選擇商品加入購物車</p>
+              </div>
+              
+              <div className="flex bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
                 <button 
                   onClick={() => setOrderType('dine_in')}
                   className={cn(
-                    "px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer",
-                    orderType === 'dine_in' ? "bg-primary text-white" : "text-primary/60 hover:text-primary"
+                    "px-4 py-1.5 rounded-md text-sm font-semibold transition-all cursor-pointer",
+                    orderType === 'dine_in' ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200" : "text-slate-500 hover:text-slate-900"
                   )}
                 >內用</button>
                 <button 
                   onClick={() => setOrderType('take_out')}
                   className={cn(
-                    "px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer",
-                    orderType === 'take_out' ? "bg-primary text-white" : "text-primary/60 hover:text-primary"
+                    "px-4 py-1.5 rounded-md text-sm font-semibold transition-all cursor-pointer",
+                    orderType === 'take_out' ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200" : "text-slate-500 hover:text-slate-900"
                   )}
                 >外帶</button>
               </div>
@@ -266,14 +420,20 @@ export default function POS() {
               {products.filter(p => p.category_id === selectedCategory).map(product => (
                 <button
                   key={product.id}
-                  onClick={() => addToCart(product)}
-                  className="bg-white/80 backdrop-blur-sm border border-primary/5 p-4 rounded-3xl text-left hover:shadow-xl hover:shadow-primary/5 transition-all group active:scale-95 cursor-pointer"
+                  onClick={() => handleProductClick(product)}
+                  className="bg-white border border-slate-200 p-4 rounded-xl text-left hover:border-teal-500/50 hover:shadow-lg hover:shadow-teal-900/5 transition-all group active:scale-[0.98] cursor-pointer relative overflow-hidden"
                 >
-                  <div className="aspect-square bg-primary/5 rounded-2xl mb-4 flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-                    <span className="text-4xl">☕</span>
+                  <div className="absolute top-0 left-0 w-1 h-full bg-teal-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="aspect-square bg-slate-50 rounded-lg mb-4 flex items-center justify-center group-hover:bg-teal-50 transition-colors relative">
+                    <span className="text-3xl group-hover:scale-110 transition-transform duration-300">☕</span>
+                    {product.modifier_groups && product.modifier_groups.length > 0 && (
+                       <span className="absolute bottom-1 right-1 bg-teal-100 text-teal-700 text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-teal-200">
+                         客製
+                       </span>
+                    )}
                   </div>
-                  <h3 className="font-bold text-primary mb-1">{product.name}</h3>
-                  <p className="text-xl font-black text-primary/40 group-hover:text-primary transition-colors">
+                  <h3 className="font-bold text-slate-900 mb-1 text-sm">{product.name}</h3>
+                  <p className="text-lg font-bold text-teal-600 group-hover:text-teal-700 transition-colors">
                     {formatCurrency(product.price)}
                   </p>
                 </button>
@@ -300,7 +460,7 @@ export default function POS() {
                 <ReceiptCard key={order.id} order={order} onClose={() => handleCloseOrder(order.id)} />
               ))}
               {orders.length === 0 && (
-                <div className="col-span-full h-96 flex flex-col items-center justify-center opacity-20">
+                <div className="col-span-full h-96 flex flex-col items-center justify-center opacity-20 text-muted-foreground">
                   <ShoppingCart className="w-24 h-24 mb-4" />
                   <p className="text-2xl font-black">目前無進行中訂單</p>
                 </div>
@@ -308,79 +468,164 @@ export default function POS() {
             </div>
           </>
         )}
+
+        {/* Modifier Modal */}
+        {isModifierModalOpen && currentProduct && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">{currentProduct.name}</h3>
+                  <p className="text-sm text-slate-500">請選擇客製化選項</p>
+                </div>
+                <button 
+                  onClick={() => setIsModifierModalOpen(false)}
+                  className="p-2 hover:bg-slate-200 rounded-full transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5 text-slate-500" />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {currentProduct.modifier_groups?.map(group => (
+                  <div key={group.id} className="space-y-3">
+                    <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                      <span className="w-1 h-4 bg-teal-500 rounded-full" />
+                      {group.name}
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {group.options.map(option => {
+                        const isSelected = tempModifiers.some(m => m.group_id === group.id && m.option_id === option.id);
+                        return (
+                          <button
+                            key={option.id}
+                            onClick={() => toggleModifier(group, option)}
+                            className={cn(
+                              "px-3 py-2.5 rounded-lg text-sm font-medium border text-left transition-all cursor-pointer flex justify-between items-center group",
+                              isSelected
+                                ? "bg-teal-50 border-teal-500 text-teal-700 shadow-sm"
+                                : "bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                            )}
+                          >
+                            <span>{option.name}</span>
+                            {option.extra_price > 0 && (
+                              <span className={cn("text-xs", isSelected ? "text-teal-600" : "text-slate-400")}>
+                                +{option.extra_price}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-4 border-t border-slate-100 bg-slate-50">
+                <div className="flex justify-between items-center mb-4 text-sm">
+                   <span className="text-slate-500">小計</span>
+                   <span className="font-bold text-lg text-slate-900">
+                     {formatCurrency(currentProduct.price + tempModifiers.reduce((s, m) => s + m.price, 0))}
+                   </span>
+                </div>
+                <button
+                  onClick={handleConfirmModifiers}
+                  className="w-full bg-teal-600 hover:bg-teal-500 text-white py-3 rounded-xl font-bold text-base shadow-lg shadow-teal-600/20 transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  確認加入
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
-      {/* Cart Sidebar - Only visible in 'order' tab */}
+      {/* Cart Sidebar */}
       {activeTab === 'order' && (
-        <aside className="w-full md:w-96 bg-white border-l border-primary/10 flex flex-col shadow-2xl z-10 animate-in slide-in-from-right duration-300">
-          <div className="p-6 border-b border-primary/5 flex items-center justify-between">
+        <aside className="w-full md:w-96 bg-white border-l border-slate-200 flex flex-col shadow-2xl z-10 animate-in slide-in-from-right duration-300">
+          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <ShoppingCart className="text-primary w-6 h-6" />
-              <h2 className="text-xl font-bold text-primary">購物車</h2>
+              <ShoppingCart className="text-teal-600 w-5 h-5" />
+              <h2 className="text-lg font-bold text-slate-800">當前購物車</h2>
             </div>
-            <span className="bg-primary/10 text-primary px-3 py-1 rounded-full text-sm font-bold">
+            <span className="bg-teal-50 text-teal-700 px-2.5 py-0.5 rounded-full text-xs font-bold border border-teal-100">
               {cart.reduce((s, i) => s + i.quantity, 0)} 項
             </span>
           </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {cart.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-muted-foreground opacity-50">
-              <ShoppingCart className="w-12 h-12 mb-4" />
-              <p>購物車是空的</p>
+            <div className="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
+              <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+                <ShoppingCart className="w-8 h-8 text-slate-300" />
+              </div>
+              <p className="font-medium text-sm">購物車是空的</p>
             </div>
           ) : (
             cart.map(item => (
-              <div key={item.id} className="bg-[#FAF5FF] p-4 rounded-2xl flex items-center gap-4">
+              <div key={item.uuid} className="bg-white border border-slate-100 p-3 rounded-xl flex items-center gap-3 shadow-sm hover:border-teal-100 transition-colors group">
                 <div className="flex-1">
-                  <p className="font-bold text-primary">{item.name}</p>
-                  <p className="text-sm text-primary/60">{formatCurrency(item.price)}</p>
+                  <div className="flex justify-between items-start">
+                    <p className="font-bold text-slate-800 text-sm">{item.name}</p>
+                    <p className="text-xs text-slate-500 font-medium whitespace-nowrap">
+                       {formatCurrency((item.price + item.selectedModifiers.reduce((s, m) => s + m.price, 0)) * item.quantity)}
+                    </p>
+                  </div>
+                  {item.selectedModifiers.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {item.selectedModifiers.map((m, idx) => (
+                        <span key={idx} className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">
+                          {m.option_name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 bg-slate-50 rounded-lg p-1 border border-slate-200 self-center">
                   <button 
-                    onClick={() => updateQuantity(item.id, -1)}
-                    className="w-8 h-8 rounded-lg bg-white border border-primary/10 flex items-center justify-center text-primary cursor-pointer"
-                  ><Minus className="w-4 h-4" /></button>
-                  <span className="font-bold w-4 text-center">{item.quantity}</span>
+                    onClick={() => updateQuantity(item.uuid, -1)}
+                    className="w-6 h-6 rounded bg-white shadow-sm flex items-center justify-center text-slate-600 hover:text-teal-600 hover:scale-110 transition-all cursor-pointer"
+                  ><Minus className="w-3 h-3" /></button>
+                  <span className="font-bold w-4 text-center text-slate-700 text-sm">{item.quantity}</span>
                   <button 
-                    onClick={() => updateQuantity(item.id, 1)}
-                    className="w-8 h-8 rounded-lg bg-white border border-primary/10 flex items-center justify-center text-primary cursor-pointer"
-                  ><Plus className="w-4 h-4" /></button>
+                    onClick={() => updateQuantity(item.uuid, 1)}
+                    className="w-6 h-6 rounded bg-white shadow-sm flex items-center justify-center text-slate-600 hover:text-teal-600 hover:scale-110 transition-all cursor-pointer"
+                  ><Plus className="w-3 h-3" /></button>
                 </div>
                 <button 
-                  onClick={() => removeItem(item.id)}
-                  className="text-destructive p-2 hover:bg-destructive/5 rounded-lg cursor-pointer"
+                  onClick={() => removeItem(item.uuid)}
+                  className="text-slate-400 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-lg transition-colors cursor-pointer opacity-0 group-hover:opacity-100 self-center"
                 ><Trash2 className="w-4 h-4" /></button>
               </div>
             ))
           )}
         </div>
 
-        <div className="p-6 bg-[#FAF5FF] border-t border-primary/10 space-y-4">
+        <div className="p-6 bg-slate-50 border-t border-slate-200 space-y-4">
           {orderType === 'dine_in' && (
-            <div className="flex items-center gap-4 bg-white p-3 rounded-xl border border-primary/10">
-              <span className="text-sm font-bold text-primary">桌號</span>
+            <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm focus-within:ring-2 focus-within:ring-teal-500/20 focus-within:border-teal-500 transition-all">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">桌號</span>
               <input 
                 type="text" 
-                placeholder="請輸入桌號"
+                placeholder="輸入桌號"
                 value={tableNumber}
                 onChange={e => setTableNumber(e.target.value)}
-                className="flex-1 bg-transparent border-none focus:ring-0 font-bold text-primary"
+                className="flex-1 bg-transparent border-none focus:ring-0 font-bold text-slate-900 placeholder:text-slate-300 text-right"
               />
             </div>
           )}
           
-          <div className="flex justify-between items-end">
-            <span className="text-muted-foreground font-bold text-sm uppercase tracking-wider">應付總額</span>
-            <span className="text-4xl font-black text-primary">{formatCurrency(total)}</span>
+          <div className="flex justify-between items-end pt-2">
+            <span className="text-slate-500 font-bold text-xs uppercase tracking-wider">應付總額</span>
+            <span className="text-3xl font-black text-slate-900 tracking-tight">{formatCurrency(total)}</span>
           </div>
 
           <button
             onClick={handleSubmitOrder}
             disabled={cart.length === 0}
-            className="w-full bg-primary text-white py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 hover:shadow-xl hover:shadow-primary/30 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+            className="w-full bg-teal-600 hover:bg-teal-500 text-white py-3.5 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-teal-600/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
           >
-            <Send className="w-6 h-6" />
+            <Send className="w-5 h-5" />
             確認送單
           </button>
         </div>
@@ -392,62 +637,90 @@ export default function POS() {
 
 function ReceiptCard({ order, onClose }: { order: any, onClose: () => void }) {
   const statusConfig = {
-    pending: { label: '待確認', color: 'bg-slate-500', icon: <Clock className="w-4 h-4" /> },
-    processing: { label: '處理中', color: 'bg-blue-500', icon: <PlayCircle className="w-4 h-4" /> },
-    completed: { label: '已完成', color: 'bg-emerald-500', icon: <CheckCircle2 className="w-4 h-4" /> }
+    pending: { 
+      label: '待確認', 
+      icon: <Clock className="w-4 h-4" />,
+      containerClass: "border-slate-200",
+      badgeClass: "bg-slate-500",
+      headerClass: "text-slate-400"
+    },
+    processing: { 
+      label: '處理中', 
+      icon: <PlayCircle className="w-4 h-4" />,
+      containerClass: "border-blue-400 shadow-lg shadow-blue-500/10",
+      badgeClass: "bg-blue-500",
+      headerClass: "text-blue-500"
+    },
+    completed: { 
+      label: '請出餐', 
+      icon: <CheckCircle2 className="w-4 h-4" />,
+      containerClass: "border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)] animate-pulse ring-2 ring-emerald-500/20",
+      badgeClass: "bg-emerald-500",
+      headerClass: "text-emerald-600"
+    }
   };
 
   const config = statusConfig[order.status as keyof typeof statusConfig] || statusConfig.pending;
 
   return (
     <div className="relative animate-in fade-in slide-in-from-top-4 duration-500 group">
-      <div className="bg-white shadow-xl rounded-sm p-8 font-mono text-slate-800 border border-slate-200 relative">
+      <div className={cn(
+        "bg-white shadow-xl rounded-xl p-8 font-mono text-slate-800 border-2 relative transition-all duration-300",
+        config.containerClass
+      )}>
         {/* Decorative top strip */}
-        <div className="absolute top-0 left-0 right-0 h-1 bg-slate-100" />
+        <div className="absolute top-0 left-0 right-0 h-1.5 bg-slate-100 rounded-t-sm" />
         
         <div className="text-center mb-6 pt-2">
-          <h3 className="font-black text-2xl mb-1 tracking-tighter uppercase">Gemini Coffee</h3>
+          <h3 className="font-black text-2xl mb-1 tracking-tighter uppercase text-slate-900">Gemini Coffee</h3>
           <p className="text-xs opacity-60 tracking-widest">**** STORE RECEIPT ****</p>
           <div className="my-4 border-b border-dashed border-slate-300" />
-          <div className="flex justify-between text-sm font-bold">
+          <div className={cn("flex justify-between text-sm font-bold", config.headerClass)}>
             <span>ORDER: #{order.order_number}</span>
-            <span>{new Date(order.created_at).toLocaleDateString()}</span>
-          </div>
-          <div className="flex justify-between text-sm font-bold">
-            <span>STAFF: 001</span>
-            <span>{new Date(order.created_at).toLocaleTimeString()}</span>
+            <span>{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
           </div>
         </div>
 
         <div className="space-y-4 mb-6">
-          <div className="flex justify-between text-xs font-black border-b border-slate-200 pb-2 uppercase opacity-60">
+          <div className="flex justify-between text-xs font-black border-b border-slate-200 pb-2 uppercase opacity-60 text-slate-500">
             <span className="flex-1 text-left">ITEM</span>
             <span className="w-12 text-center">QTY</span>
             <span className="w-20 text-right">PRICE</span>
           </div>
           {order.order_items?.map((item: any) => (
-            <div key={item.id} className="flex justify-between text-sm font-bold leading-tight">
-              <span className="flex-1 text-left truncate pr-2">{item.product_name}</span>
-              <span className="w-12 text-center">x{item.quantity}</span>
-              <span className="w-20 text-right">{item.price * item.quantity}</span>
+            <div key={item.id} className="flex flex-col text-sm font-bold leading-tight">
+              <div className="flex justify-between">
+                <span className="flex-1 text-left truncate pr-2 text-slate-700">{item.product_name}</span>
+                <span className="w-12 text-center text-slate-500">x{item.quantity}</span>
+                <span className="w-20 text-right text-slate-900">{item.price * item.quantity}</span>
+              </div>
+              {item.modifiers && item.modifiers.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1 pl-0">
+                  {item.modifiers.map((m: any, idx: number) => (
+                     <span key={idx} className="text-[10px] text-slate-400 font-medium">
+                       + {m.option_name}
+                     </span>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
 
         <div className="border-t-2 border-double border-slate-300 pt-4 mb-6">
-          <div className="flex justify-between font-black text-3xl">
+          <div className="flex justify-between font-black text-3xl text-slate-900">
             <span>TOTAL</span>
             <span>${order.total_amount}</span>
           </div>
-          <div className="flex justify-between text-sm mt-6 font-black border-2 border-slate-800 p-3 text-center uppercase bg-slate-50">
+          <div className="flex justify-between text-sm mt-6 font-black border-2 border-slate-200 p-3 text-center uppercase bg-slate-50 rounded-lg text-slate-600">
             <span className="flex-1">{order.type === 'dine_in' ? `Table: ${order.table_number}` : 'Take Away'}</span>
           </div>
         </div>
 
         {/* Status Badge */}
         <div className={cn(
-          "flex items-center justify-center gap-2 py-3 rounded-lg text-white font-black text-sm mb-4",
-          config.color
+          "flex items-center justify-center gap-2 py-3 rounded-lg text-white font-black text-sm mb-4 shadow-md transition-all",
+          config.badgeClass
         )}>
           {config.icon}
           {config.label}
@@ -456,9 +729,9 @@ function ReceiptCard({ order, onClose }: { order: any, onClose: () => void }) {
         {order.status === 'completed' && (
           <button
             onClick={onClose}
-            className="w-full bg-slate-900 text-white py-5 rounded-xl font-black text-base uppercase tracking-[0.2em] hover:bg-black transition-all active:scale-95 cursor-pointer shadow-lg shadow-black/20"
+            className="w-full bg-slate-900 text-white py-4 rounded-xl font-black text-base uppercase tracking-[0.2em] hover:bg-black transition-all active:scale-[0.98] cursor-pointer shadow-lg shadow-slate-900/20"
           >
-            Finalize Order
+            結單
           </button>
         )}
 

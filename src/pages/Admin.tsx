@@ -9,9 +9,22 @@ import {
   ChevronRight,
   TrendingUp,
   ShoppingBag,
-  Users2
+  Users2,
+  Building2,
+  Settings,
+  ChefHat,
+  Store,
+  Tag,
+  Settings2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import Products from './admin/Products';
+import Tenants from './admin/tenants/Tenants';
+import Stores from './admin/stores/Stores';
+import Categories from './admin/categories/Categories';
+import Modifiers from './admin/modifiers/Modifiers';
+import { supabase } from '@/lib/supabase';
+import { useEffect, useState } from 'react';
 
 // Sub-pages (Stubs)
 const Overview = () => (
@@ -24,8 +37,8 @@ const Overview = () => (
     </div>
     
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2 bg-white rounded-3xl p-8 border border-primary/5 shadow-sm">
-        <h3 className="text-xl font-bold text-primary mb-6">銷售趨勢</h3>
+      <div className="lg:col-span-2 bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
+        <h3 className="text-xl font-bold text-slate-900 mb-6">銷售趨勢</h3>
         <div className="h-[300px] flex items-end gap-4">
           {[40, 60, 45, 90, 65, 80, 50].map((h, i) => (
             <div key={i} className="flex-1 bg-primary/10 rounded-t-xl relative group">
@@ -36,13 +49,13 @@ const Overview = () => (
             </div>
           ))}
         </div>
-        <div className="flex justify-between mt-4 text-xs font-bold text-primary/40 uppercase">
+        <div className="flex justify-between mt-4 text-xs font-bold text-slate-400 uppercase">
           <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
         </div>
       </div>
       
-      <div className="bg-white rounded-3xl p-8 border border-primary/5 shadow-sm">
-        <h3 className="text-xl font-bold text-primary mb-6">熱門類別</h3>
+      <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
+        <h3 className="text-xl font-bold text-slate-900 mb-6">熱門類別</h3>
         <div className="space-y-6">
           <CategoryProgress name="義式咖啡" value={75} color="bg-primary" />
           <CategoryProgress name="茶飲系列" value={45} color="bg-blue-500" />
@@ -54,63 +67,142 @@ const Overview = () => (
 );
 
 const StatCard = ({ title, value, icon, trend }: any) => (
-  <div className="bg-white rounded-3xl p-6 border border-primary/5 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all group">
+  <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all group">
     <div className="flex justify-between items-start mb-4">
       <div className="p-3 bg-primary/5 rounded-2xl group-hover:bg-primary/10 transition-colors">
         {icon}
       </div>
       {trend && <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-lg">{trend}</span>}
     </div>
-    <p className="text-sm font-bold text-primary/40 uppercase tracking-wider mb-1">{title}</p>
-    <p className="text-3xl font-black text-primary">{value}</p>
+    <p className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">{title}</p>
+    <p className="text-3xl font-black text-slate-900">{value}</p>
   </div>
 );
 
 const CategoryProgress = ({ name, value, color }: any) => (
   <div className="space-y-2">
-    <div className="flex justify-between text-sm font-bold text-primary">
+    <div className="flex justify-between text-sm font-bold text-slate-900">
       <span>{name}</span>
       <span>{value}%</span>
     </div>
-    <div className="h-2 bg-primary/5 rounded-full overflow-hidden">
+    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
       <div className={cn("h-full rounded-full", color)} style={{ width: `${value}%` }} />
     </div>
   </div>
 );
 
-const Employees = () => <div className="p-8 bg-white rounded-3xl border border-primary/5">員工管理 (開發中)</div>;
-const Products = () => <div className="p-8 bg-white rounded-3xl border border-primary/5">商品管理 (開發中)</div>;
-const Reports = () => <div className="p-8 bg-white rounded-3xl border border-primary/5">銷售報表 (開發中)</div>;
-const HistoryLogs = () => <div className="p-8 bg-white rounded-3xl border border-primary/5">登入歷史 (開發中)</div>;
+const Employees = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">員工管理 (開發中)</div>;
+const Reports = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">銷售報表 (開發中)</div>;
+const HistoryLogs = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">登入歷史 (開發中)</div>;
+const KitchenSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">廚房設定 (開發中)</div>;
+const SystemSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">系統設定 (開發中)</div>;
 
 export default function Admin() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [role, setRole] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string>('管理員');
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        supabase.from('profiles').select('role, name').eq('id', user.id).single()
+          .then(({ data }) => {
+            if (data) {
+              setRole(data.role);
+              setUserName(data.name || '管理員');
+            }
+          });
+      }
+    });
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/admin/login');
+  };
 
   const menuItems = [
-    { path: '/admin', icon: <LayoutDashboard className="w-5 h-5" />, label: '總覽' },
-    { path: '/admin/employees', icon: <Users className="w-5 h-5" />, label: '員工管理' },
-    { path: '/admin/products', icon: <Coffee className="w-5 h-5" />, label: '商品管理' },
-    { path: '/admin/reports', icon: <BarChart3 className="w-5 h-5" />, label: '銷售報表' },
-    { path: '/admin/history', icon: <History className="w-5 h-5" />, label: '歷史記錄' },
+    { 
+      path: '/admin', 
+      icon: <LayoutDashboard className="w-5 h-5" />, 
+      label: '總覽',
+      roles: ['super_admin', 'partner', 'store_manager'] 
+    },
+    { 
+      path: '/admin/tenants', 
+      icon: <Building2 className="w-5 h-5" />, 
+      label: '合作夥伴',
+      roles: ['super_admin'] 
+    },
+    { 
+      path: '/admin/stores', 
+      icon: <Store className="w-5 h-5" />, 
+      label: '門市管理',
+      roles: ['partner'] 
+    },
+    { 
+      path: '/admin/categories', 
+      icon: <Tag className="w-5 h-5" />, 
+      label: '分類管理',
+      roles: ['partner'] 
+    },
+    { 
+      path: '/admin/products', 
+      icon: <Coffee className="w-5 h-5" />, 
+      label: '商品管理',
+      roles: ['store_manager', 'partner'] 
+    },
+    { 
+      path: '/admin/modifiers', 
+      icon: <Settings2 className="w-5 h-5" />, 
+      label: '自定義選項',
+      roles: ['partner'] 
+    },
+    { 
+      path: '/admin/employees', 
+      icon: <Users className="w-5 h-5" />, 
+      label: '員工管理',
+      roles: ['store_manager', 'partner'] 
+    },
+    { 
+      path: '/admin/kitchen', 
+      icon: <ChefHat className="w-5 h-5" />, 
+      label: '廚房設定',
+      roles: ['store_manager'] 
+    },
+    { 
+      path: '/admin/reports', 
+      icon: <BarChart3 className="w-5 h-5" />, 
+      label: '銷售報表',
+      roles: ['partner', 'store_manager'] 
+    },
+    { 
+      path: '/admin/settings', 
+      icon: <Settings className="w-5 h-5" />, 
+      label: '系統設定',
+      roles: ['super_admin', 'partner', 'store_manager'] 
+    },
   ];
 
+  const filteredMenu = menuItems.filter(item => !role || item.roles.includes(role));
+
   return (
-    <div className="min-h-screen bg-[#FAF5FF] flex font-['Plus_Jakarta_Sans']">
+    <div className="min-h-screen bg-slate-50 flex font-sans">
       {/* Sidebar */}
-      <aside className="w-72 bg-white border-r border-primary/5 flex flex-col fixed inset-y-0 shadow-sm z-50">
+      <aside className="w-72 bg-white border-r border-slate-200 flex flex-col fixed inset-y-0 shadow-sm z-50 hidden md:flex">
         <div className="p-8 flex items-center gap-3">
           <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20">
             <LayoutDashboard className="text-white w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-primary tracking-tight">MiniPOS</h1>
-            <p className="text-[10px] font-bold text-primary/40 uppercase tracking-widest">Admin Panel</p>
+            <h1 className="text-xl font-black text-slate-900 tracking-tight">MiniPOS</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Admin Panel</p>
           </div>
         </div>
 
-        <nav className="flex-1 px-4 space-y-2 mt-4">
-          {menuItems.map((item) => {
+        <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
+          {filteredMenu.map((item) => {
             const isActive = location.pathname === item.path || (item.path !== '/admin' && location.pathname.startsWith(item.path));
             return (
               <Link
@@ -120,7 +212,7 @@ export default function Admin() {
                   "flex items-center gap-4 px-4 py-4 rounded-2xl font-bold transition-all group",
                   isActive 
                     ? "bg-primary text-white shadow-lg shadow-primary/20" 
-                    : "text-primary/60 hover:bg-primary/5 hover:text-primary"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 )}
               >
                 {item.icon}
@@ -133,8 +225,8 @@ export default function Admin() {
 
         <div className="p-6">
           <button 
-            onClick={() => navigate('/login')}
-            className="w-full p-4 flex items-center gap-4 text-destructive font-bold hover:bg-destructive/5 rounded-2xl transition-all cursor-pointer"
+            onClick={handleLogout}
+            className="w-full p-4 flex items-center gap-4 text-red-500 font-bold hover:bg-red-50 rounded-2xl transition-all cursor-pointer"
           >
             <LogOut className="w-5 h-5" />
             <span>登出系統</span>
@@ -143,23 +235,23 @@ export default function Admin() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 ml-72 p-12">
+      <main className="flex-1 md:ml-72 p-8 md:p-12">
         <header className="mb-12 flex justify-between items-center">
           <div>
-            <h2 className="text-4xl font-black text-primary mb-2">
+            <h2 className="text-4xl font-black text-slate-900 mb-2">
               {menuItems.find(i => i.path === location.pathname)?.label || '管理系統'}
             </h2>
-            <p className="text-primary/40 font-bold uppercase tracking-widest text-xs">
-              Gemini Coffee • 店長模式
+            <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">
+              {role === 'super_admin' ? '超級管理員模式' : '品牌總部模式'}
             </p>
           </div>
           
           <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="font-bold text-primary">林管理員</p>
-              <p className="text-xs text-primary/40">總部管理者</p>
+            <div className="text-right hidden sm:block">
+              <p className="font-bold text-slate-900">{userName}</p>
+              <p className="text-xs text-slate-400 capitalize">{role?.replace('_', ' ')}</p>
             </div>
-            <div className="w-12 h-12 bg-white rounded-2xl border border-primary/10 flex items-center justify-center">
+            <div className="w-12 h-12 bg-white rounded-2xl border border-slate-200 flex items-center justify-center shadow-sm">
               <Users className="text-primary w-6 h-6" />
             </div>
           </div>
@@ -167,10 +259,16 @@ export default function Admin() {
 
         <Routes>
           <Route index element={<Overview />} />
+          <Route path="tenants" element={<Tenants />} />
+          <Route path="stores" element={<Stores />} />
+          <Route path="categories" element={<Categories />} />
+          <Route path="modifiers" element={<Modifiers />} />
           <Route path="employees" element={<Employees />} />
           <Route path="products" element={<Products />} />
+          <Route path="kitchen" element={<KitchenSettings />} />
           <Route path="reports" element={<Reports />} />
           <Route path="history" element={<HistoryLogs />} />
+          <Route path="settings" element={<SystemSettings />} />
         </Routes>
       </main>
     </div>
