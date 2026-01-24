@@ -17,15 +17,30 @@ jobs:
       - name: Dump Database
         env:
           PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
         run: |
+          set -o pipefail
           DATE=$(date +%Y%m%d_%H%M%S)
-          # 使用 Session Mode (連接埠 5432) 或 Transaction Mode (連接埠 6543)
-          # 格式: postgres://postgres.[PROJECT_REF]:[PASSWORD]@db.[PROJECT_REF].supabase.co:5432/postgres
-          pg_dump "postgres://postgres.${{ secrets.SUPABASE_PROJECT_REF }}:$PGPASSWORD@${{ secrets.SUPABASE_DB_HOST }}:5432/postgres" | gzip > backup_$DATE.sql.gz
+          
+          # 1. 嘗試使用 Port 6543 (Supabase Pooler)，對 IPv4 環境較友善
+          # 使用 Pooler 時，用戶名格式必須是 postgres.[PROJECT_REF]
+          echo "Starting backup for project $PROJECT_REF..."
+          
+          pg_dump -h "$DB_HOST" -p 6543 -U "postgres.$PROJECT_REF" -d postgres -v | gzip > backup_$DATE.sql.gz
+          
+          # 2. 檢查檔案大小，如果小於 100 bytes 視為異常
+          FILE_SIZE=$(stat -c%s "backup_$DATE.sql.gz")
+          echo "Backup completed. File size: $FILE_SIZE bytes"
+          
+          if [ $FILE_SIZE -lt 100 ]; then
+            echo "Error: Backup file is suspiciously small ($FILE_SIZE bytes), it might be empty."
+            exit 1
+          fi
 
       - name: Upload Backup Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: db-backup
+          name: db-backup-${{ github.run_id }}
           path: backup_*.sql.gz
           retention-days: 30
