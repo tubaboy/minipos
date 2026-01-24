@@ -30,7 +30,7 @@ export default function Kitchen() {
   const navigate = useNavigate();
 
   // Load employee session
-  const employeeData = localStorage.getItem('minipos_employee');
+  const employeeData = localStorage.getItem('velopos_employee');
   const employee = employeeData ? JSON.parse(employeeData) : null;
   const storeId = employee?.store_id;
 
@@ -92,7 +92,7 @@ export default function Kitchen() {
   const processingOrders = orders.filter(o => o.status === 'processing');
   const completedOrders = orders.filter(o => o.status === 'completed');
 
-  const storeName = localStorage.getItem('minipos_store_name');
+  const storeName = localStorage.getItem('velopos_store_name');
 
   return (
     <div className="h-screen bg-[#1E1B4B] flex flex-col font-sans text-white">

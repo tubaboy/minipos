@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard, ArrowRight, Store } from 'lucide-react';
+import { ArrowRight, Store } from 'lucide-react';
 import { toast } from 'sonner';
+import Logo from '@/components/Logo';
 
 export default function AdminLogin() {
   const [email, setEmail] = useState('');
@@ -71,10 +72,10 @@ export default function AdminLogin() {
         <div className="absolute -top-20 -right-20 w-64 h-64 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
         
         <div className="mb-10 text-center relative z-10">
-          <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20 mx-auto mb-6">
-            <LayoutDashboard className="text-white w-8 h-8" />
+          <div className="flex justify-center mb-6">
+            <Logo className="w-20 h-20" />
           </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight mb-2">MiniPOS Admin</h1>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight mb-2">VELO POS Admin</h1>
           <p className="text-slate-500 text-sm font-bold uppercase tracking-widest">後台管理系統</p>
         </div>
 
@@ -87,7 +88,7 @@ export default function AdminLogin() {
               onChange={(e) => setEmail(e.target.value)}
               required
               className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl font-bold text-slate-900 focus:border-primary focus:outline-none focus:bg-white transition-all placeholder:text-slate-300"
-              placeholder="admin@minipos.com"
+              placeholder="admin@velopos.com"
             />
           </div>
           

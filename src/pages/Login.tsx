@@ -10,9 +10,9 @@ export default function Login() {
   const navigate = useNavigate();
 
   // Mode: 'bind' (Admin Login -> Select Store) or 'pos' (Enter PIN)
-  const [storeId, setStoreId] = useState<string | null>(localStorage.getItem('minipos_store_id'));
-  const [storeName, setStoreName] = useState<string | null>(localStorage.getItem('minipos_store_name'));
-  const [deviceRole, setDeviceRole] = useState<string | null>(localStorage.getItem('minipos_device_role'));
+  const [storeId, setStoreId] = useState<string | null>(localStorage.getItem('velopos_store_id'));
+  const [storeName, setStoreName] = useState<string | null>(localStorage.getItem('velopos_store_name'));
+  const [deviceRole, setDeviceRole] = useState<string | null>(localStorage.getItem('velopos_device_role'));
 
   // Bind Mode State
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
@@ -109,10 +109,10 @@ export default function Login() {
 
   const finalizeBinding = async (store: any, role: string, mode: string) => {
     // 1. Save Binding Info
-    localStorage.setItem('minipos_store_id', store.id);
-    localStorage.setItem('minipos_store_name', store.name);
-    localStorage.setItem('minipos_device_role', role);
-    localStorage.setItem('minipos_tenant_mode', mode);
+    localStorage.setItem('velopos_store_id', store.id);
+    localStorage.setItem('velopos_store_name', store.name);
+    localStorage.setItem('velopos_device_role', role);
+    localStorage.setItem('velopos_tenant_mode', mode);
     
     setStoreId(store.id);
     setStoreName(store.name);
@@ -128,10 +128,10 @@ export default function Login() {
 
   const handleUnbind = () => {
     if (confirm('確定要解除此裝置的分店綁定嗎？(需要重新登入總部帳號)')) {
-      localStorage.removeItem('minipos_store_id');
-      localStorage.removeItem('minipos_store_name');
-      localStorage.removeItem('minipos_device_role');
-      localStorage.removeItem('minipos_tenant_mode');
+      localStorage.removeItem('velopos_store_id');
+      localStorage.removeItem('velopos_store_name');
+      localStorage.removeItem('velopos_device_role');
+      localStorage.removeItem('velopos_tenant_mode');
       setStoreId(null);
       setStoreName(null);
       setDeviceRole(null);
@@ -166,7 +166,7 @@ export default function Login() {
       if (!data) throw new Error('PIN 碼錯誤或員工不存在');
 
       // Login success
-      localStorage.setItem('minipos_employee', JSON.stringify(data));
+      localStorage.setItem('velopos_employee', JSON.stringify(data));
       toast.success(`歡迎回來，${data.name}`);
       
       // Redirect based on device role

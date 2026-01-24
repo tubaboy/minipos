@@ -6,7 +6,7 @@
 
 ---
 
-**Project:** MiniPOS
+**Project:** VELO POS
 **Generated:** 2026-01-22 21:43:35
 **Category:** SaaS (General)
 

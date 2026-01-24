@@ -66,12 +66,13 @@ export default function POS() {
   const navigate = useNavigate();
 
   // Load employee session
-  const employeeData = localStorage.getItem('minipos_employee');
+  const employeeData = localStorage.getItem('velopos_employee');
   const employee = employeeData ? JSON.parse(employeeData) : null;
   
   // Use real tenant_id from employee, or fallback
   const tenantId = employee?.tenant_id;
   const storeId = employee?.store_id;
+  const tenantMode = localStorage.getItem('velopos_tenant_mode') || 'multi';
 
   useEffect(() => {
     if (!employee) {
@@ -80,7 +81,7 @@ export default function POS() {
     }
 
     // Set local store name as fallback
-    setStoreName(localStorage.getItem('minipos_store_name') || '');
+    setStoreName(localStorage.getItem('velopos_store_name') || '');
 
     fetchData();
     if (activeTab === 'history') {
@@ -175,7 +176,7 @@ export default function POS() {
     
     if (error) toast.error('結單失敗');
     else {
-      toast.success('訂單已結單');
+      toast.success(tenantMode === 'single' ? '交易已完成' : '訂單已結單');
       fetchOrders();
     }
   };
@@ -237,21 +238,21 @@ export default function POS() {
 
   const toggleModifier = (group: ModifierGroup, option: ModifierOption) => {
     setTempModifiers(prev => {
-      // Check if this group is already selected (Single selection per group for now, or Multi? Usually single for Sugar/Ice)
-      // Let's assume Single Selection for Sugar/Ice types. 
-      // If we want multi-select (toppings), we need a flag on ModifierGroup 'allow_multiple'. 
-      // For now, let's enforce Single Selection per group to keep it simple as per schema didn't specify type.
-      // But typically, Sugar/Ice are single. Toppings are multi. 
-      // Let's assume ALL are single selection for this iteration to avoid complexity, or check if existing selection exists.
+      const isSelected = prev.some(m => m.group_id === group.id && m.option_id === option.id);
       
-      const filtered = prev.filter(m => m.group_id !== group.id); // Remove existing choice for this group
-      return [...filtered, {
-        group_id: group.id,
-        group_name: group.name,
-        option_id: option.id,
-        option_name: option.name,
-        price: option.extra_price
-      }];
+      if (isSelected) {
+        // Deselect if already selected
+        return prev.filter(m => !(m.group_id === group.id && m.option_id === option.id));
+      } else {
+        // Add to selection (Multi-select allowed)
+        return [...prev, {
+          group_id: group.id,
+          group_name: group.name,
+          option_id: option.id,
+          option_name: option.name,
+          price: option.extra_price
+        }];
+      }
     });
   };
 
@@ -274,6 +275,9 @@ export default function POS() {
       const { data: orderNumber, error: seqError } = await supabase.rpc('generate_order_number', { p_tenant_id: tenantId });
       if (seqError) throw seqError;
 
+      // In single mode, order status starts as 'completed' (waiting for final close/payment)
+      const initialStatus = tenantMode === 'single' ? 'completed' : 'pending';
+
       const { data: order, error: orderError } = await supabase.from('orders').insert({
         tenant_id: tenantId,
         store_id: storeId,
@@ -281,7 +285,7 @@ export default function POS() {
         type: orderType,
         table_number: tableNumber,
         total_amount: total,
-        status: 'pending'
+        status: initialStatus
       }).select().single();
 
       if (orderError) throw orderError;
@@ -304,7 +308,7 @@ export default function POS() {
       const { error: itemsError } = await supabase.from('order_items').insert(orderItems);
       if (itemsError) throw itemsError;
 
-      toast.success(`訂單已送出：${orderNumber}`);
+      toast.success(tenantMode === 'single' ? `訂單已成立：${orderNumber}` : `訂單已送出：${orderNumber}`);
       setCart([]);
       setTableNumber('');
     } catch (err: any) {
@@ -350,7 +354,7 @@ export default function POS() {
                     : "text-slate-400 hover:bg-slate-800 hover:text-white"
                 )}
               >
-                <ShoppingCart className="w-4 h-4" /> <span className="text-sm">訂單管理</span>
+                <ShoppingCart className="w-4 h-4" /> <span className="text-sm">{tenantMode === 'single' ? '交易紀錄' : '訂單管理'}</span>
               </button>
               {employee?.role === 'store_manager' && (
                 <button 
@@ -364,7 +368,9 @@ export default function POS() {
           </div>
 
           <p className="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 hidden md:block">商品分類</p>
-          {categories.map(cat => (
+          {categories
+            .filter(cat => products.some(p => p.category_id === cat.id))
+            .map(cat => (
             <button
               key={cat.id}
               onClick={() => { setSelectedCategory(cat.id); setActiveTab('order'); }}
@@ -402,7 +408,9 @@ export default function POS() {
                 <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
                   {categories.find(c => c.id === selectedCategory)?.name || '商品項目'}
                 </h2>
-                <p className="text-sm text-slate-500 mt-1">選擇商品加入購物車</p>
+                <p className="text-sm text-slate-500 mt-1">
+                  {tenantMode === 'single' ? '快速點餐結帳' : '選擇商品加入購物車'}
+                </p>
               </div>
               
               <div className="flex bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
@@ -451,13 +459,18 @@ export default function POS() {
           <>
             <header className="mb-8 flex items-center justify-between">
               <div>
-                <h2 className="text-3xl font-bold text-primary">訂單管理</h2>
-                <p className="text-primary/40 text-sm font-bold uppercase tracking-widest mt-1">即時訂單狀態監控</p>
+                <h2 className="text-3xl font-bold text-primary">{tenantMode === 'single' ? '今日交易' : '訂單管理'}</h2>
+                <p className="text-primary/40 text-sm font-bold uppercase tracking-widest mt-1">
+                   {tenantMode === 'single' ? '管理進行中的交易' : '即時訂單狀態監控'}
+                </p>
               </div>
               <div className="flex gap-4">
                 <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border border-primary/10">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-xs font-bold text-primary">已完成可結單: {orders.filter(o => o.status === 'completed').length}</span>
+                  <span className="text-xs font-bold text-primary">
+                    {tenantMode === 'single' ? '待結帳: ' : '已完成可結單: '}
+                    {orders.filter(o => o.status === 'completed').length}
+                  </span>
                 </div>
               </div>
             </header>
@@ -469,6 +482,7 @@ export default function POS() {
                   order={order} 
                   tenantName={tenantName}
                   storeName={storeName}
+                  tenantMode={tenantMode}
                   onClose={() => handleCloseOrder(order.id)} 
                 />
               ))}
@@ -639,7 +653,7 @@ export default function POS() {
             className="w-full bg-teal-600 hover:bg-teal-500 text-white py-3.5 rounded-xl font-bold text-base flex items-center justify-center gap-2 shadow-lg shadow-teal-600/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
           >
             <Send className="w-5 h-5" />
-            確認送單
+            {tenantMode === 'single' ? '完成下單' : '確認送單'}
           </button>
         </div>
       </aside>
@@ -648,7 +662,7 @@ export default function POS() {
   );
 }
 
-function ReceiptCard({ order, tenantName, storeName, onClose }: { order: any, tenantName: string, storeName: string, onClose: () => void }) {
+function ReceiptCard({ order, tenantName, storeName, tenantMode, onClose }: { order: any, tenantName: string, storeName: string, tenantMode: string, onClose: () => void }) {
   const statusConfig = {
     pending: { 
       label: '待確認', 
@@ -665,11 +679,11 @@ function ReceiptCard({ order, tenantName, storeName, onClose }: { order: any, te
       headerClass: "text-blue-500"
     },
     completed: { 
-      label: '請出餐', 
+      label: tenantMode === 'single' ? '待出餐' : '請出餐', 
       icon: <CheckCircle2 className="w-4 h-4" />,
-      containerClass: "border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)] animate-pulse ring-2 ring-emerald-500/20",
-      badgeClass: "bg-emerald-500",
-      headerClass: "text-emerald-600"
+      containerClass: tenantMode === 'single' ? "border-teal-500" : "border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)] animate-pulse ring-2 ring-emerald-500/20",
+      badgeClass: tenantMode === 'single' ? "bg-teal-600" : "bg-emerald-500",
+      headerClass: tenantMode === 'single' ? "text-teal-700" : "text-emerald-600"
     }
   };
 
@@ -742,9 +756,12 @@ function ReceiptCard({ order, tenantName, storeName, onClose }: { order: any, te
         {order.status === 'completed' && (
           <button
             onClick={onClose}
-            className="w-full bg-slate-900 text-white py-4 rounded-xl font-black text-base uppercase tracking-[0.2em] hover:bg-black transition-all active:scale-[0.98] cursor-pointer shadow-lg shadow-slate-900/20"
+            className={cn(
+               "w-full text-white py-4 rounded-xl font-black text-base uppercase tracking-[0.2em] transition-all active:scale-[0.98] cursor-pointer shadow-lg",
+               tenantMode === 'single' ? "bg-slate-900 hover:bg-black shadow-slate-900/20" : "bg-slate-900 hover:bg-black shadow-slate-900/20"
+            )}
           >
-            結單
+            {tenantMode === 'single' ? '完成交易 (已出餐)' : '結單'}
           </button>
         )}
 

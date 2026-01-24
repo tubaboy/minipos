@@ -27,3 +27,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Project specific ignores
+.agent/
+.agents/
+.gemini/
+.opencode/
+.shared/
+design-system/
+*.tsbuildinfo
