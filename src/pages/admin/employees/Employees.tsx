@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { User, KeyRound, Shield, AlertCircle, Loader2, Store, Mail, Trash2, Users, Plus, Edit2, X, Check } from 'lucide-react';
+import { User, KeyRound, Shield, Loader2, Store, Mail, Trash2, Users, Plus, Edit2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 

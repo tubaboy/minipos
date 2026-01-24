@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Plus, Store, MapPin, Trash2, Edit2, X, ClipboardList, Check, ShoppingBag, Loader2 } from 'lucide-react';
+import { Plus, Store, MapPin, Trash2, Edit2, X, ClipboardList, Check, ShoppingBag } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 

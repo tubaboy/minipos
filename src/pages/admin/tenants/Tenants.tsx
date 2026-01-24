@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Plus, Building2, Trash2, Calendar, Copy, Check, Users, X, Layers, Monitor } from 'lucide-react';
+import { Plus, Building2, Trash2, Calendar, Copy, Check, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
