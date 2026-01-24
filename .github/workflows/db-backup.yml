@@ -18,18 +18,22 @@ jobs:
         env:
           PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-          DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
         run: |
           set -o pipefail
           DATE=$(date +%Y%m%d_%H%M%S)
           
-          # 1. 嘗試使用 Port 6543 (Supabase Pooler)，對 IPv4 環境較友善
-          # 使用 Pooler 時，用戶名格式必須是 postgres.[PROJECT_REF]
-          echo "Starting backup for project $PROJECT_REF..."
+          # 直接使用 PROJECT_REF 拼接官方格式的 Host
+          # 這裡使用 Pooler 地址，通常格式為: aws-0-[region].pooler.supabase.com
+          # 如果你不知道 Region，最穩的是使用 db.[PROJECT_REF].supabase.co (直接連線)
+          # 我們這裡改用標準的直連 Host 並搭配 Port 5432，但在 GitHub Actions 強制使用 IPv4
           
-          pg_dump -h "$DB_HOST" -p 6543 -U "postgres.$PROJECT_REF" -d postgres -v | gzip > backup_$DATE.sql.gz
+          DB_HOST="db.$PROJECT_REF.supabase.co"
           
-          # 2. 檢查檔案大小，如果小於 100 bytes 視為異常
+          echo "Starting backup for project $PROJECT_REF via $DB_HOST..."
+          
+          # 使用 -h $DB_HOST
+          pg_dump -h "$DB_HOST" -p 5432 -U "postgres" -d postgres -v | gzip > backup_$DATE.sql.gz
+          
           FILE_SIZE=$(stat -c%s "backup_$DATE.sql.gz")
           echo "Backup completed. File size: $FILE_SIZE bytes"
           
