@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Plus, Tag, Trash2, Edit2, X } from 'lucide-react';
+import { Plus, Tag, Trash2, Edit2, X, Check, Settings2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 type Category = {
   id: string;
@@ -9,33 +10,79 @@ type Category = {
   created_at: string;
 };
 
+type ModifierGroup = {
+  id: string;
+  name: string;
+};
+
 export default function Categories() {
   const [categories, setCategories] = useState<Category[]>([]);
+  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [selectedModifiers, setSelectedModifiers] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchCategories();
+    fetchData();
   }, []);
 
-  const fetchCategories = async () => {
+  const fetchData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const { data, error } = await supabase
+      // 1. Fetch Categories
+      const { data: catData, error: catError } = await supabase
         .from('categories')
         .select('*')
         .order('name');
-      if (error) throw error;
-      setCategories(data || []);
+      if (catError) throw catError;
+      setCategories(catData || []);
+
+      // 2. Fetch All Available Modifiers
+      const { data: modData } = await supabase
+        .from('modifier_groups')
+        .select('id, name')
+        .order('name');
+      setModifierGroups(modData || []);
+
     } catch (error: any) {
-      toast.error('無法載入分類', { description: error.message });
+      toast.error('無法載入資料', { description: error.message });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOpenModal = async (category?: Category) => {
+    if (category) {
+      setIsEditing(true);
+      setCurrentId(category.id);
+      setName(category.name);
+      
+      // Fetch currently linked modifiers for this category
+      const { data } = await supabase
+        .from('category_modifier_groups')
+        .select('modifier_group_id')
+        .eq('category_id', category.id);
+      
+      setSelectedModifiers(data?.map(d => d.modifier_group_id) || []);
+    } else {
+      setIsEditing(false);
+      setCurrentId(null);
+      setName('');
+      setSelectedModifiers([]);
+    }
+    setShowModal(true);
+  };
+
+  const toggleModifier = (id: string) => {
+    setSelectedModifiers(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -44,27 +91,41 @@ export default function Categories() {
 
     setSubmitting(true);
     try {
-      const { data: profile } = await supabase.from('profiles').select('tenant_id').single();
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', user?.id).single();
       
+      let categoryId = currentId;
+
       if (isEditing && currentId) {
-        const { error } = await supabase
-          .from('categories')
-          .update({ name })
-          .eq('id', currentId);
-        if (error) throw error;
-        toast.success('分類更新成功');
+        await supabase.from('categories').update({ name }).eq('id', currentId);
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('categories')
-          .insert([{ name, tenant_id: profile?.tenant_id }]);
+          .insert([{ name, tenant_id: profile?.tenant_id }])
+          .select()
+          .single();
         if (error) throw error;
-        toast.success('分類建立成功');
+        categoryId = data.id;
       }
 
+      // Sync Modifiers
+      if (categoryId) {
+        // 1. Delete existing links
+        await supabase.from('category_modifier_groups').delete().eq('category_id', categoryId);
+        
+        // 2. Insert new links
+        if (selectedModifiers.length > 0) {
+          const links = selectedModifiers.map(mid => ({
+            category_id: categoryId,
+            modifier_group_id: mid
+          }));
+          await supabase.from('category_modifier_groups').insert(links);
+        }
+      }
+
+      toast.success(isEditing ? '分類已更新' : '分類已建立');
       setShowModal(false);
-      setName('');
-      setIsEditing(false);
-      fetchCategories();
+      fetchData();
     } catch (error: any) {
       toast.error('儲存失敗', { description: error.message });
     } finally {
@@ -73,14 +134,14 @@ export default function Categories() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('確定要刪除此分類嗎？這可能會導致該分類下的商品變為未分類。')) return;
+    if (!confirm('確定要刪除此分類嗎？這將會移除與所有商品的關聯。')) return;
     try {
       const { error } = await supabase.from('categories').delete().eq('id', id);
       if (error) throw error;
       setCategories(categories.filter(c => c.id !== id));
       toast.success('分類已刪除');
     } catch (error: any) {
-      toast.error('刪除失敗', { description: '請確認該分類下是否還有商品' });
+      toast.error('刪除失敗');
     }
   };
 
@@ -92,10 +153,10 @@ export default function Categories() {
             <Tag className="w-8 h-8 text-primary" />
             分類管理
           </h1>
-          <p className="text-slate-500 font-bold mt-1">定義商品的類別，方便 POS 端快速查找</p>
+          <p className="text-slate-500 font-bold mt-1">定義商品類別，並統一配置加料/自定義選項</p>
         </div>
         <button
-          onClick={() => { setName(''); setIsEditing(false); setShowModal(true); }}
+          onClick={() => handleOpenModal()}
           className="bg-primary text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg active:scale-95 transition-all"
         >
           <Plus className="w-5 h-5" />
@@ -103,7 +164,7 @@ export default function Categories() {
         </button>
       </div>
 
-      <div className="bg-white border-2 border-slate-100 rounded-[2rem] overflow-hidden shadow-sm">
+      <div className="bg-white border-2 border-slate-100 rounded-[2.5rem] overflow-hidden shadow-sm">
         {loading ? (
           <div className="p-12 space-y-4">
             {[1, 2, 3].map(i => <div key={i} className="h-12 bg-slate-50 rounded-xl animate-pulse" />)}
@@ -118,16 +179,13 @@ export default function Categories() {
                   <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
                     <Tag className="w-5 h-5" />
                   </div>
-                  <span className="text-lg font-black text-slate-900">{category.name}</span>
+                  <div>
+                    <span className="text-lg font-black text-slate-900">{category.name}</span>
+                  </div>
                 </div>
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button 
-                    onClick={() => {
-                      setIsEditing(true);
-                      setCurrentId(category.id);
-                      setName(category.name);
-                      setShowModal(true);
-                    }}
+                    onClick={() => handleOpenModal(category)}
                     className="p-2 text-slate-400 hover:text-primary hover:bg-white rounded-lg shadow-sm border border-transparent hover:border-slate-100"
                   >
                     <Edit2 className="w-4 h-4" />
@@ -148,27 +206,75 @@ export default function Categories() {
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] w-full max-w-md p-8 shadow-2xl animate-in fade-in zoom-in duration-200">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl animate-in fade-in zoom-in duration-200">
             <div className="flex justify-between items-center mb-8">
-              <h2 className="text-2xl font-black">{isEditing ? '編輯分類' : '新增分類'}</h2>
-              <button onClick={() => setShowModal(false)} className="p-2 hover:bg-slate-100 rounded-full"><X className="w-6 h-6 text-slate-400" /></button>
+              <div>
+                <h2 className="text-2xl font-black text-slate-900">{isEditing ? '編輯分類' : '新增分類'}</h2>
+                <p className="text-sm text-slate-500 font-bold">設定名稱與預設客製化選項</p>
+              </div>
+              <button onClick={() => setShowModal(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-6 h-6 text-slate-400" /></button>
             </div>
-            <form onSubmit={handleSubmit} className="space-y-6">
+            
+            <form onSubmit={handleSubmit} className="space-y-8">
               <div className="space-y-2">
                 <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">分類名稱</label>
                 <input
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="例如：熱咖啡、季節限定"
-                  className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-900 focus:border-primary focus:outline-none focus:bg-white transition-all"
+                  placeholder="例如：熱咖啡、精選甜點"
+                  className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-900 focus:border-primary focus:outline-none focus:bg-white transition-all"
                   autoFocus
                   required
                 />
               </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-xs font-black text-slate-400 uppercase tracking-widest ml-1">
+                  <Settings2 className="w-3 h-3" />
+                  預設套用客製化選項
+                </div>
+                
+                {modifierGroups.length === 0 ? (
+                  <div className="p-4 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 text-center text-xs font-bold text-slate-400">
+                    請先在「自定義選項」建立群組
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {modifierGroups.map(group => {
+                      const isSelected = selectedModifiers.includes(group.id);
+                      return (
+                        <button
+                          key={group.id}
+                          type="button"
+                          onClick={() => toggleModifier(group.id)}
+                          className={cn(
+                            "flex items-center gap-3 p-4 rounded-2xl border-2 transition-all text-left",
+                            isSelected 
+                              ? "bg-primary/5 border-primary text-primary shadow-sm" 
+                              : "bg-white border-slate-100 text-slate-500 hover:border-slate-200"
+                          )}
+                        >
+                          <div className={cn(
+                            "w-5 h-5 rounded-md flex items-center justify-center transition-colors",
+                            isSelected ? "bg-primary text-white" : "bg-slate-100"
+                          )}>
+                            {isSelected && <Check className="w-3.5 h-3.5" />}
+                          </div>
+                          <span className="text-sm font-black truncate">{group.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-[10px] text-slate-400 font-bold bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
+                  * 勾選後，系統會自動將這些選項套用至此分類下的「所有現有商品」，且未來新增至此分類的商品也會自動繼承。
+                </p>
+              </div>
+
               <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black">取消</button>
-                <button type="submit" disabled={submitting} className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg shadow-primary/20">
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black hover:bg-slate-200 transition-colors">取消</button>
+                <button type="submit" disabled={submitting} className="flex-1 py-4 bg-primary text-white rounded-2xl font-black shadow-lg shadow-primary/20 active:scale-95 transition-all">
                   {submitting ? '儲存中...' : '確認儲存'}
                 </button>
               </div>

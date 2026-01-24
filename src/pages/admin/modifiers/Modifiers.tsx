@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Plus, Settings2, Trash2, Edit2, X, PlusCircle } from 'lucide-react';
+import { Plus, Settings2, Trash2, Edit2, X, PlusCircle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 type ModifierOption = {
@@ -19,23 +19,49 @@ type ModifierGroup = {
 export default function Modifiers() {
   const [groups, setGroups] = useState<ModifierGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tenantId, setTenantId] = useState<string | null>(null);
   
   // Group Modal
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ModifierGroup | null>(null);
   const [groupName, setGroupName] = useState('');
+  const [submittingGroup, setSubmittingGroup] = useState(false);
 
   // Option Modal
   const [showOptionModal, setShowOptionModal] = useState(false);
   const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
   const [optionName, setOptionName] = useState('');
   const [extraPrice, setExtraPrice] = useState('0');
+  const [submittingOption, setSubmittingOption] = useState(false);
 
   useEffect(() => {
-    fetchData();
+    init();
   }, []);
 
-  const fetchData = async () => {
+  const init = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('tenant_id')
+        .eq('id', user.id)
+        .single();
+
+      if (error) throw error;
+      setTenantId(profile.tenant_id);
+      fetchData(profile.tenant_id);
+    } catch (error: any) {
+      console.error('Init error:', error);
+      toast.error('無法讀取權限資訊');
+    }
+  };
+
+  const fetchData = async (tid?: string) => {
+    const currentTid = tid || tenantId;
+    if (!currentTid) return;
+
     setLoading(true);
     try {
       const { data: groupsData, error: groupsError } = await supabase
@@ -44,6 +70,7 @@ export default function Modifiers() {
           *,
           options: modifier_options(*)
         `)
+        .eq('tenant_id', currentTid)
         .order('created_at');
 
       if (groupsError) throw groupsError;
@@ -57,50 +84,86 @@ export default function Modifiers() {
 
   const handleSaveGroup = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tenantId) {
+      toast.error('尚未取得權限資訊，請重新整理頁面');
+      return;
+    }
+
+    setSubmittingGroup(true);
     try {
-      const { data: profile } = await supabase.from('profiles').select('tenant_id').single();
       if (editingGroup) {
-        await supabase.from('modifier_groups').update({ name: groupName }).eq('id', editingGroup.id);
+        const { error } = await supabase
+          .from('modifier_groups')
+          .update({ name: groupName })
+          .eq('id', editingGroup.id);
+        if (error) throw error;
       } else {
-        await supabase.from('modifier_groups').insert([{ name: groupName, tenant_id: profile?.tenant_id }]);
+        const { error } = await supabase
+          .from('modifier_groups')
+          .insert([{ name: groupName, tenant_id: tenantId }]);
+        if (error) throw error;
       }
+      
       setShowGroupModal(false);
       setGroupName('');
       fetchData();
       toast.success('儲存成功');
-    } catch (error) {
-      toast.error('儲存失敗');
+    } catch (error: any) {
+      console.error('Save group error:', error);
+      toast.error('儲存失敗', { description: error.message });
+    } finally {
+      setSubmittingGroup(false);
     }
   };
 
   const handleSaveOption = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetGroupId) return;
+    
+    setSubmittingOption(true);
     try {
-      await supabase.from('modifier_options').insert([{
+      const { error } = await supabase.from('modifier_options').insert([{
         group_id: targetGroupId,
         name: optionName,
         extra_price: Number(extraPrice)
       }]);
+      
+      if (error) throw error;
+
       setShowOptionModal(false);
       setOptionName('');
       setExtraPrice('0');
       fetchData();
       toast.success('選項已新增');
-    } catch (error) {
-      toast.error('新增失敗');
+    } catch (error: any) {
+      console.error('Save option error:', error);
+      toast.error('新增失敗', { description: error.message });
+    } finally {
+      setSubmittingOption(false);
     }
   };
 
   const deleteGroup = async (id: string) => {
     if (!confirm('確定刪除此群組及其所有選項？')) return;
-    await supabase.from('modifier_groups').delete().eq('id', id);
-    fetchData();
+    try {
+      const { error } = await supabase.from('modifier_groups').delete().eq('id', id);
+      if (error) throw error;
+      fetchData();
+      toast.success('已刪除群組');
+    } catch (error: any) {
+      toast.error('刪除失敗');
+    }
   };
 
   const deleteOption = async (id: string) => {
-    await supabase.from('modifier_options').delete().eq('id', id);
-    fetchData();
+    try {
+      const { error } = await supabase.from('modifier_options').delete().eq('id', id);
+      if (error) throw error;
+      fetchData();
+      toast.success('已刪除選項');
+    } catch (error: any) {
+      toast.error('刪除失敗');
+    }
   };
 
   return (
@@ -115,7 +178,7 @@ export default function Modifiers() {
         </div>
         <button
           onClick={() => { setEditingGroup(null); setGroupName(''); setShowGroupModal(true); }}
-          className="bg-primary text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg"
+          className="bg-primary text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg hover:shadow-primary/30 active:scale-95 transition-all"
         >
           <Plus className="w-5 h-5" />
           新增群組
@@ -126,13 +189,18 @@ export default function Modifiers() {
         <div className="grid gap-6">
           {[1, 2].map(i => <div key={i} className="h-40 bg-slate-100 rounded-3xl animate-pulse" />)}
         </div>
+      ) : groups.length === 0 ? (
+        <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] p-20 text-center">
+          <Settings2 className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+          <p className="text-slate-400 font-bold">尚未建立任何客製化群組</p>
+        </div>
       ) : (
         <div className="grid gap-8">
           {groups.map((group) => (
-            <div key={group.id} className="bg-white border-2 border-slate-100 rounded-[2.5rem] overflow-hidden shadow-sm">
+            <div key={group.id} className="bg-white border-2 border-slate-100 rounded-[2.5rem] overflow-hidden shadow-sm hover:border-primary/20 transition-all group/card">
               <div className="p-8 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
                 <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center text-primary font-black text-xl">
+                  <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center text-primary font-black text-xl border border-slate-100">
                     {group.name.charAt(0)}
                   </div>
                   <div>
@@ -205,8 +273,11 @@ export default function Modifiers() {
                 required 
               />
               <div className="flex gap-3 pt-4">
-                <button type="button" onClick={() => setShowGroupModal(false)} className="flex-1 py-4 bg-slate-100 rounded-2xl font-black">取消</button>
-                <button type="submit" className="flex-1 py-4 bg-primary text-white rounded-2xl font-black">儲存</button>
+                <button type="button" onClick={() => setShowGroupModal(false)} className="flex-1 py-4 bg-slate-100 rounded-2xl font-black text-slate-600">取消</button>
+                <button type="submit" disabled={submittingGroup} className="flex-1 py-4 bg-primary text-white rounded-2xl font-black flex items-center justify-center gap-2">
+                  {submittingGroup && <Loader2 className="w-5 h-5 animate-spin" />}
+                  儲存
+                </button>
               </div>
             </form>
           </div>
@@ -220,7 +291,7 @@ export default function Modifiers() {
             <h2 className="text-2xl font-black mb-6">新增選項</h2>
             <form onSubmit={handleSaveOption} className="space-y-4">
               <div className="space-y-2">
-                <label className="text-xs font-black text-slate-400 uppercase">選項名稱</label>
+                <label className="text-xs font-black text-slate-400 uppercase ml-1">選項名稱</label>
                 <input 
                   type="text" 
                   value={optionName} 
@@ -231,7 +302,7 @@ export default function Modifiers() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-black text-slate-400 uppercase">加價金額</label>
+                <label className="text-xs font-black text-slate-400 uppercase ml-1">加價金額</label>
                 <input 
                   type="number" 
                   value={extraPrice} 
@@ -241,8 +312,11 @@ export default function Modifiers() {
                 />
               </div>
               <div className="flex gap-3 pt-4">
-                <button type="button" onClick={() => setShowOptionModal(false)} className="flex-1 py-4 bg-slate-100 rounded-2xl font-black">取消</button>
-                <button type="submit" className="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black">確認新增</button>
+                <button type="button" onClick={() => setShowOptionModal(false)} className="flex-1 py-4 bg-slate-100 rounded-2xl font-black text-slate-600">取消</button>
+                <button type="submit" disabled={submittingOption} className="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black flex items-center justify-center gap-2">
+                  {submittingOption && <Loader2 className="w-5 h-5 animate-spin" />}
+                  確認新增
+                </button>
               </div>
             </form>
           </div>

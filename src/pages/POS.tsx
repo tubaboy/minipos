@@ -54,6 +54,10 @@ export default function POS() {
   const [orderType, setOrderType] = useState<'dine_in' | 'take_out'>('dine_in');
   const [tableNumber, setTableNumber] = useState('');
   
+  // Brand/Store Names
+  const [tenantName, setTenantName] = useState('VELO');
+  const [storeName, setStoreName] = useState('');
+  
   // Modifier Modal State
   const [isModifierModalOpen, setIsModifierModalOpen] = useState(false);
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
@@ -75,6 +79,9 @@ export default function POS() {
       return;
     }
 
+    // Set local store name as fallback
+    setStoreName(localStorage.getItem('minipos_store_name') || '');
+
     fetchData();
     if (activeTab === 'history') {
       fetchOrders();
@@ -93,56 +100,56 @@ export default function POS() {
   }, [activeTab, tenantId]);
 
   async function fetchData() {
-    if (!tenantId) return;
+    if (!storeId) return;
 
-    // 1. Fetch Categories
-    const { data: catData } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('tenant_id', tenantId)
-      .order('sort_order');
-    
-    // 2. Fetch Products
-    const { data: prodData } = await supabase
-      .from('products')
-      .select('*')
-      .eq('tenant_id', tenantId);
+    try {
+      const { data, error } = await supabase.rpc('get_store_menu', { p_store_id: storeId });
+      
+      if (error) throw error;
+      if (!data) return;
 
-    // 3. Fetch Modifiers Structure (Groups -> Options)
-    const { data: modGroups } = await supabase
-      .from('modifier_groups')
-      .select('*, modifier_options(*)')
-      .eq('tenant_id', tenantId);
+      const { 
+        categories: catData, 
+        products: prodData, 
+        modifier_groups: modGroups, 
+        prod_mod_links: prodModLinks,
+        tenant_name,
+        store_name
+      } = data;
 
-    // 4. Fetch Product <-> Modifier links
-    const { data: prodModLinks } = await supabase
-      .from('product_modifier_groups')
-      .select('*');
+      // Update names from safe RPC source
+      if (tenant_name) setTenantName(tenant_name);
+      if (store_name) setStoreName(store_name);
 
-    if (catData) {
-      setCategories(catData);
-      if (catData.length > 0 && !selectedCategory) setSelectedCategory(catData[0].id);
-    }
+      if (catData) {
+        setCategories(catData);
+        if (catData.length > 0 && !selectedCategory) setSelectedCategory(catData[0].id);
+      }
+// ... rest of fetchData
 
-    if (prodData) {
-      // Map modifiers to products
-      const productsWithModifiers = prodData.map(p => {
-        const linkedGroupIds = prodModLinks
-          ?.filter(link => link.product_id === p.id)
-          .map(link => link.modifier_group_id);
-        
-        const groups = modGroups
-          ?.filter(g => linkedGroupIds?.includes(g.id))
-          .map(g => ({
-            id: g.id,
-            name: g.name,
-            options: g.modifier_options?.sort((a: any, b: any) => a.sort_order - b.sort_order) || []
-          }));
+      if (prodData) {
+        // Map modifiers to products
+        const productsWithModifiers = prodData.map((p: any) => {
+          const linkedGroupIds = prodModLinks
+            ?.filter((link: any) => link.product_id === p.id)
+            .map((link: any) => link.modifier_group_id);
+          
+          const groups = modGroups
+            ?.filter((g: any) => linkedGroupIds?.includes(g.id))
+            .map((g: any) => ({
+              id: g.id,
+              name: g.name,
+              options: g.options || []
+            }));
 
-        return { ...p, modifier_groups: groups || [] };
-      });
+          return { ...p, modifier_groups: groups || [] };
+        });
 
-      setProducts(productsWithModifiers);
+        setProducts(productsWithModifiers);
+      }
+    } catch (err: any) {
+      console.error("Fetch Data Error:", err);
+      toast.error('無法載入菜單資料');
     }
   }
 
@@ -457,7 +464,13 @@ export default function POS() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
               {orders.map(order => (
-                <ReceiptCard key={order.id} order={order} onClose={() => handleCloseOrder(order.id)} />
+                <ReceiptCard 
+                  key={order.id} 
+                  order={order} 
+                  tenantName={tenantName}
+                  storeName={storeName}
+                  onClose={() => handleCloseOrder(order.id)} 
+                />
               ))}
               {orders.length === 0 && (
                 <div className="col-span-full h-96 flex flex-col items-center justify-center opacity-20 text-muted-foreground">
@@ -635,7 +648,7 @@ export default function POS() {
   );
 }
 
-function ReceiptCard({ order, onClose }: { order: any, onClose: () => void }) {
+function ReceiptCard({ order, tenantName, storeName, onClose }: { order: any, tenantName: string, storeName: string, onClose: () => void }) {
   const statusConfig = {
     pending: { 
       label: '待確認', 
@@ -672,8 +685,8 @@ function ReceiptCard({ order, onClose }: { order: any, onClose: () => void }) {
         <div className="absolute top-0 left-0 right-0 h-1.5 bg-slate-100 rounded-t-sm" />
         
         <div className="text-center mb-6 pt-2">
-          <h3 className="font-black text-2xl mb-1 tracking-tighter uppercase text-slate-900">Gemini Coffee</h3>
-          <p className="text-xs opacity-60 tracking-widest">**** STORE RECEIPT ****</p>
+          <h3 className="font-black text-2xl mb-1 tracking-tighter uppercase text-slate-900">{tenantName}</h3>
+          <p className="text-xs opacity-60 tracking-widest">**** {storeName} RECEIPT ****</p>
           <div className="my-4 border-b border-dashed border-slate-300" />
           <div className={cn("flex justify-between text-sm font-bold", config.headerClass)}>
             <span>ORDER: #{order.order_number}</span>

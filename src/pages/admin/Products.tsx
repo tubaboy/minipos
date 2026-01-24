@@ -104,19 +104,30 @@ export default function Products() {
 
     setSaving(true);
     try {
-      const { data: profile } = await supabase.from('profiles').select('tenant_id').single();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("尚未登入");
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('tenant_id')
+        .eq('id', user.id)
+        .single();
+      
+      if (profileError || !profile) throw new Error("無法取得權限資訊");
+
       const productData = {
         name: currentProduct.name,
         price: currentProduct.price,
         category_id: currentProduct.category_id,
         image_url: currentProduct.image_url || null,
-        tenant_id: profile?.tenant_id,
+        tenant_id: profile.tenant_id,
         is_available: currentProduct.is_available ?? true
       };
 
       let productId = currentProduct.id;
       if (isEditing && productId) {
-        await supabase.from('products').update(productData).eq('id', productId);
+        const { error } = await supabase.from('products').update(productData).eq('id', productId);
+        if (error) throw error;
       } else {
         const { data, error } = await supabase.from('products').insert([productData]).select().single();
         if (error) throw error;
@@ -124,13 +135,19 @@ export default function Products() {
       }
 
       if (productId) {
-        await supabase.from('product_modifier_groups').delete().eq('product_id', productId);
+        // Manual override from UI (if any selected)
+        // Wait, if the trigger already inserted, do we want to overwrite?
+        // Usually yes, if the user explicitly changed them in the UI.
+        const { error: delError } = await supabase.from('product_modifier_groups').delete().eq('product_id', productId);
+        if (delError) console.error("Sync modifiers delete error:", delError);
+
         if (selectedModifierIds.length > 0) {
           const relations = selectedModifierIds.map(mgId => ({
             product_id: productId,
             modifier_group_id: mgId
           }));
-          await supabase.from('product_modifier_groups').insert(relations);
+          const { error: insError } = await supabase.from('product_modifier_groups').insert(relations);
+          if (insError) throw insError;
         }
       }
 
@@ -138,7 +155,8 @@ export default function Products() {
       setShowModal(false);
       fetchInitialData();
     } catch (error: any) {
-      toast.error('儲存失敗');
+      console.error("Save Product Error:", error);
+      toast.error('儲存失敗', { description: error.message });
     } finally {
       setSaving(false);
     }

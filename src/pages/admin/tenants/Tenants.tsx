@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Plus, Building2, Trash2, Calendar, Copy, Check, Users, X } from 'lucide-react';
+import { Plus, Building2, Trash2, Calendar, Copy, Check, Users, X, Layers, Monitor } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 type Tenant = {
   id: string;
   name: string;
+  mode: 'multi' | 'single';
   created_at: string;
 };
 
@@ -22,6 +24,7 @@ export default function Tenants() {
   // Create Tenant Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newTenantName, setNewTenantName] = useState('');
+  const [newTenantMode, setNewTenantMode] = useState<'multi' | 'single'>('multi');
   const [creating, setCreating] = useState(false);
   
   // Account Modal State
@@ -123,7 +126,10 @@ export default function Tenants() {
     try {
       const { data, error } = await supabase
         .from('tenants')
-        .insert([{ name: newTenantName }])
+        .insert([{ 
+          name: newTenantName,
+          mode: newTenantMode 
+        }])
         .select()
         .single();
 
@@ -132,6 +138,7 @@ export default function Tenants() {
       setTenants([data, ...tenants]);
       setShowCreateModal(false);
       setNewTenantName('');
+      setNewTenantMode('multi');
       toast.success('合作夥伴建立成功');
     } catch (error: any) {
       toast.error('建立失敗', { description: error.message });
@@ -210,12 +217,20 @@ export default function Tenants() {
                 <div className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
                   <Building2 className="w-6 h-6" />
                 </div>
-                <button
-                  onClick={() => handleDeleteTenant(tenant.id)}
-                  className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
+                <div className="flex gap-2">
+                  <span className={cn(
+                    "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
+                    tenant.mode === 'multi' ? "bg-teal-50 text-teal-600 border border-teal-100" : "bg-blue-50 text-blue-600 border border-blue-100"
+                  )}>
+                    {tenant.mode === 'multi' ? '多機版 (點餐-廚房)' : '單機版 (點餐)'}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteTenant(tenant.id)}
+                    className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
 
               <h3 className="text-xl font-black text-slate-900 mb-2">{tenant.name}</h3>
@@ -269,6 +284,20 @@ export default function Tenants() {
                   required
                 />
               </div>
+              
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase ml-1">運作模式</label>
+                <select
+                  value={newTenantMode}
+                  onChange={(e) => setNewTenantMode(e.target.value as 'multi' | 'single')}
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl font-bold text-slate-900 focus:border-primary focus:outline-none transition-all cursor-pointer"
+                  required
+                >
+                  <option value="multi">多機版 (點餐-廚房)</option>
+                  <option value="single">單機版 (點餐)</option>
+                </select>
+              </div>
+
               <div className="flex gap-3 pt-4">
                 <button type="button" onClick={() => setShowCreateModal(false)} className="flex-1 px-4 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold">取消</button>
                 <button type="submit" disabled={creating} className="flex-1 px-4 py-3 bg-primary text-white rounded-xl font-bold">{creating ? '建立中...' : '確認建立'}</button>

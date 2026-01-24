@@ -17,6 +17,7 @@ import {
   Settings2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import Employees from './admin/employees/Employees';
 import Products from './admin/Products';
 import Tenants from './admin/tenants/Tenants';
 import Stores from './admin/stores/Stores';
@@ -24,8 +25,35 @@ import Categories from './admin/categories/Categories';
 import Modifiers from './admin/modifiers/Modifiers';
 import { supabase } from '@/lib/supabase';
 import { useEffect, useState } from 'react';
+import Logo from '@/components/Logo';
 
-// Sub-pages (Stubs)
+// --- Sub-components (Stat Cards & Overview) ---
+
+const StatCard = ({ title, value, icon, trend }: any) => (
+  <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all group">
+    <div className="flex justify-between items-start mb-4">
+      <div className="p-3 bg-primary/5 rounded-2xl group-hover:bg-primary/10 transition-colors">
+        {icon}
+      </div>
+      {trend && <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-lg">{trend}</span>}
+    </div>
+    <p className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">{title}</p>
+    <p className="text-3xl font-black text-slate-900">{value}</p>
+  </div>
+);
+
+const CategoryProgress = ({ name, value, color }: any) => (
+  <div className="space-y-2">
+    <div className="flex justify-between text-sm font-bold text-slate-900">
+      <span>{name}</span>
+      <span>{value}%</span>
+    </div>
+    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+      <div className={cn("h-full rounded-full", color)} style={{ width: `${value}%` }} />
+    </div>
+  </div>
+);
+
 const Overview = () => (
   <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -65,36 +93,11 @@ const Overview = () => (
   </div>
 );
 
-const StatCard = ({ title, value, icon, trend }: any) => (
-  <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all group">
-    <div className="flex justify-between items-start mb-4">
-      <div className="p-3 bg-primary/5 rounded-2xl group-hover:bg-primary/10 transition-colors">
-        {icon}
-      </div>
-      {trend && <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-lg">{trend}</span>}
-    </div>
-    <p className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">{title}</p>
-    <p className="text-3xl font-black text-slate-900">{value}</p>
-  </div>
-);
+const Reports = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">銷售報表功能開發中...</div>;
+const KitchenSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">廚房設定功能開發中...</div>;
+const SystemSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">系統設定功能開發中...</div>;
 
-const CategoryProgress = ({ name, value, color }: any) => (
-  <div className="space-y-2">
-    <div className="flex justify-between text-sm font-bold text-slate-900">
-      <span>{name}</span>
-      <span>{value}%</span>
-    </div>
-    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-      <div className={cn("h-full rounded-full", color)} style={{ width: `${value}%` }} />
-    </div>
-  </div>
-);
-
-const Employees = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">員工管理 (開發中)</div>;
-const Reports = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">銷售報表 (開發中)</div>;
-const HistoryLogs = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">登入歷史 (開發中)</div>;
-const KitchenSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">廚房設定 (開發中)</div>;
-const SystemSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100">系統設定 (開發中)</div>;
+// --- Main Layout ---
 
 export default function Admin() {
   const location = useLocation();
@@ -150,7 +153,7 @@ export default function Admin() {
       path: '/admin/products', 
       icon: <Coffee className="w-5 h-5" />, 
       label: '商品管理',
-      roles: ['store_manager', 'partner'] 
+      roles: ['partner'] 
     },
     { 
       path: '/admin/modifiers', 
@@ -160,8 +163,8 @@ export default function Admin() {
     },
     { 
       path: '/admin/employees', 
-      icon: <Users className="w-5 h-5" />, 
-      label: '員工管理',
+      icon: <Users2 className="w-5 h-5" />, 
+      label: '人員管理',
       roles: ['store_manager', 'partner'] 
     },
     { 
@@ -190,14 +193,8 @@ export default function Admin() {
     <div className="min-h-screen bg-slate-50 flex font-sans">
       {/* Sidebar */}
       <aside className="w-72 bg-white border-r border-slate-200 flex flex-col fixed inset-y-0 shadow-sm z-50 hidden md:flex">
-        <div className="p-8 flex items-center gap-3">
-          <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20">
-            <LayoutDashboard className="text-white w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-slate-900 tracking-tight">MiniPOS</h1>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Admin Panel</p>
-          </div>
+        <div className="p-8">
+          <Logo showText className="w-10 h-10" />
         </div>
 
         <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
@@ -241,7 +238,7 @@ export default function Admin() {
               {menuItems.find(i => i.path === location.pathname)?.label || '管理系統'}
             </h2>
             <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">
-              {role === 'super_admin' ? '超級管理員模式' : '品牌總部模式'}
+              {role === 'super_admin' ? '超級管理員模式' : role === 'partner' ? '品牌總部模式' : '門市店長模式'}
             </p>
           </div>
           
@@ -266,7 +263,6 @@ export default function Admin() {
           <Route path="products" element={<Products />} />
           <Route path="kitchen" element={<KitchenSettings />} />
           <Route path="reports" element={<Reports />} />
-          <Route path="history" element={<HistoryLogs />} />
           <Route path="settings" element={<SystemSettings />} />
         </Routes>
       </main>
