@@ -18,21 +18,18 @@ jobs:
         env:
           PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
         run: |
           set -o pipefail
           DATE=$(date +%Y%m%d_%H%M%S)
           
-          # 直接使用 PROJECT_REF 拼接官方格式的 Host
-          # 這裡使用 Pooler 地址，通常格式為: aws-0-[region].pooler.supabase.com
-          # 如果你不知道 Region，最穩的是使用 db.[PROJECT_REF].supabase.co (直接連線)
-          # 我們這裡改用標準的直連 Host 並搭配 Port 5432，但在 GitHub Actions 強制使用 IPv4
+          # 當使用 Port 6543 (Pooler) 時：
+          # 1. 用戶名必須是 postgres.[PROJECT_REF]
+          # 2. 此主機支援 IPv4，可解決 Network is unreachable 問題
           
-          DB_HOST="db.$PROJECT_REF.supabase.co"
+          echo "Starting backup via Pooler Host: $DB_HOST..."
           
-          echo "Starting backup for project $PROJECT_REF via $DB_HOST..."
-          
-          # 使用 -h $DB_HOST
-          pg_dump -h "$DB_HOST" -p 5432 -U "postgres" -d postgres -v | gzip > backup_$DATE.sql.gz
+          pg_dump -h "$DB_HOST" -p 6543 -U "postgres.$PROJECT_REF" -d postgres -v | gzip > backup_$DATE.sql.gz
           
           FILE_SIZE=$(stat -c%s "backup_$DATE.sql.gz")
           echo "Backup completed. File size: $FILE_SIZE bytes"
