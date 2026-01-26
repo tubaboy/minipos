@@ -214,19 +214,6 @@ export default function Settings() {
     }
   };
 
-  const handleUnbind = () => {
-    if (confirm('確定要解除此裝置綁定嗎？解除後需重新使用配對碼。')) {
-      localStorage.removeItem('velopos_device_token');
-      localStorage.removeItem('velopos_store_id');
-      localStorage.removeItem('velopos_store_name');
-      localStorage.removeItem('velopos_device_role');
-      localStorage.removeItem('velopos_tenant_mode');
-      localStorage.removeItem('velopos_employee');
-      toast.success('裝置已解除綁定');
-      navigate('/login');
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">

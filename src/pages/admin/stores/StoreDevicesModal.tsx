@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { X, Smartphone, Monitor, Trash2, Plus, RefreshCw, Clock } from 'lucide-react';
+import { X, Smartphone, Monitor, Trash2, RefreshCw, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
