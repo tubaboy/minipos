@@ -79,11 +79,11 @@ export default function Stores() {
     if (user) {
       const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
       setUserRole(profile?.role || null);
-      fetchStores(profile?.role);
+      fetchStores();
     }
   };
 
-  const fetchStores = async (role?: string | null) => {
+  const fetchStores = async () => {
     try {
       setLoading(true);
       
