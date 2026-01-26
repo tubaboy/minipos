@@ -10,7 +10,7 @@ import {
   ShoppingBag,
   Users2,
   Building2,
-  Settings,
+  Settings as SettingsIcon,
   ChefHat,
   Store,
   Tag,
@@ -23,6 +23,7 @@ import Tenants from './admin/tenants/Tenants';
 import Stores from './admin/stores/Stores';
 import Categories from './admin/categories/Categories';
 import Modifiers from './admin/modifiers/Modifiers';
+import Settings from './admin/Settings';
 import { supabase } from '@/lib/supabase';
 import { useEffect, useState } from 'react';
 import Logo from '@/components/Logo';
@@ -95,7 +96,6 @@ const Overview = () => (
 
 const Reports = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">銷售報表功能開發中...</div>;
 const KitchenSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">廚房設定功能開發中...</div>;
-const SystemSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">系統設定功能開發中...</div>;
 
 // --- Main Layout ---
 
@@ -141,7 +141,7 @@ export default function Admin() {
       path: '/admin/stores', 
       icon: <Store className="w-5 h-5" />, 
       label: '門市管理',
-      roles: ['partner'] 
+      roles: ['partner', 'store_manager'] 
     },
     { 
       path: '/admin/categories', 
@@ -181,7 +181,7 @@ export default function Admin() {
     },
     { 
       path: '/admin/settings', 
-      icon: <Settings className="w-5 h-5" />, 
+      icon: <SettingsIcon className="w-5 h-5" />, 
       label: '系統設定',
       roles: ['super_admin', 'partner', 'store_manager'] 
     },
@@ -263,7 +263,7 @@ export default function Admin() {
           <Route path="products" element={<Products />} />
           <Route path="kitchen" element={<KitchenSettings />} />
           <Route path="reports" element={<Reports />} />
-          <Route path="settings" element={<SystemSettings />} />
+          <Route path="settings" element={<Settings />} />
         </Routes>
       </main>
     </div>

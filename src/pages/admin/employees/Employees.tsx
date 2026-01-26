@@ -145,8 +145,8 @@ export default function Employees() {
       toast.error('請填寫完整資料');
       return;
     }
-    if (staffPin.length < 4 || staffPin.length > 6) {
-      toast.error('PIN 碼需為 4-6 碼');
+    if (staffPin.length !== 4) {
+      toast.error('PIN 碼需固定為 4 碼數字');
       return;
     }
 
@@ -378,7 +378,7 @@ export default function Employees() {
             <div className="flex justify-between items-center mb-8">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">{editingStaff ? '編輯員工資料' : '新增 POS 員工'}</h2>
-                <p className="text-sm text-slate-500 font-bold">設定姓名與 4-6 位數登入 PIN 碼</p>
+                <p className="text-sm text-slate-500 font-bold">設定姓名與 4 位數登入 PIN 碼</p>
               </div>
               <button onClick={() => setShowStaffModal(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-6 h-6 text-slate-400" /></button>
             </div>
@@ -412,13 +412,13 @@ export default function Employees() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">登入 PIN 碼 (4-6 碼)</label>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">登入 PIN 碼 (4 碼)</label>
                 <input 
                   type="text" 
                   value={staffPin}
-                  onChange={e => setStaffPin(e.target.value.replace(/\D/g, '').slice(0,6))}
+                  onChange={e => setStaffPin(e.target.value.replace(/\D/g, '').slice(0,4))}
                   placeholder="請輸入數字密碼"
-                  className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-900 focus:border-primary focus:outline-none transition-all"
+                  className="w-full px-6 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black tracking-[0.5em] text-center text-slate-900 focus:border-primary focus:outline-none transition-all"
                   required
                 />
               </div>

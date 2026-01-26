@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { cn, formatCurrency } from '@/lib/utils';
-import { ShoppingCart, User, LogOut, ChevronRight, Plus, Minus, Trash2, Send, CheckCircle2, PlayCircle, Clock, X } from 'lucide-react';
+import { 
+  ShoppingCart, User, LogOut, ChevronRight, Plus, Minus, Trash2, Send, 
+  CheckCircle2, PlayCircle, Clock, X, RefreshCw 
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -57,6 +60,11 @@ export default function POS() {
   // Brand/Store Names
   const [tenantName, setTenantName] = useState('VELO');
   const [storeName, setStoreName] = useState('');
+  const [isStoreOpen, setIsStoreOpen] = useState(true);
+  const [tenantSettings, setTenantSettings] = useState({
+    allow_dine_in: true,
+    allow_take_out: true
+  });
   
   // Modifier Modal State
   const [isModifierModalOpen, setIsModifierModalOpen] = useState(false);
@@ -88,17 +96,101 @@ export default function POS() {
       fetchOrders();
     }
 
-    const channel = supabase
+    // 1. Realtime Listener for Orders
+    const orderChannel = supabase
       .channel('pos_orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `store_id=eq.${storeId}` }, () => {
         fetchOrders();
       })
       .subscribe();
 
+    // 2. Realtime Listener for Device Status (Immediate Kick)
+    const deviceToken = localStorage.getItem('velopos_device_token');
+    const deviceChannel = supabase
+      .channel('device_status')
+      .on(
+        'postgres_changes', 
+        { event: 'DELETE', schema: 'public', table: 'pos_devices' }, 
+        (payload) => {
+          if (payload.old && payload.old.device_token === deviceToken) {
+            handleKick();
+          }
+        }
+      )
+      .subscribe();
+
+    // 3. Realtime Listener for Store Status (Open/Close)
+    const storeChannel = supabase
+      .channel('store_status')
+      .on(
+        'postgres_changes',
+        { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'stores', 
+          filter: `id=eq.${storeId}` 
+        },
+        (payload) => {
+          if (payload.new && payload.new.settings) {
+            const newIsOpen = payload.new.settings.is_open ?? true;
+            setIsStoreOpen(newIsOpen);
+            
+            // Also update tenant settings if they were part of the payload (optional safety)
+            if (payload.new.settings.allow_dine_in !== undefined) {
+              setTenantSettings(prev => ({
+                ...prev,
+                allow_dine_in: payload.new.settings.allow_dine_in,
+                allow_take_out: payload.new.settings.allow_take_out
+              }));
+            }
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(orderChannel);
+      supabase.removeChannel(deviceChannel);
+      supabase.removeChannel(storeChannel);
     };
   }, [activeTab, tenantId]);
+
+  // 3. Heartbeat Mechanism
+  useEffect(() => {
+    const deviceToken = localStorage.getItem('velopos_device_token');
+    if (!deviceToken) return;
+
+    const performHeartbeat = async () => {
+      try {
+        const { error } = await supabase.rpc('get_device_session', { p_device_token: deviceToken });
+        if (error) {
+          console.warn("Heartbeat failed, device might be revoked.");
+          handleKick();
+        }
+      } catch (e) {
+        handleKick();
+      }
+    };
+
+    // Update once immediately
+    performHeartbeat();
+
+    // Then interval every 1 minute
+    const interval = setInterval(performHeartbeat, 60000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleKick = () => {
+    localStorage.removeItem('velopos_device_token');
+    localStorage.removeItem('velopos_store_id');
+    localStorage.removeItem('velopos_store_name');
+    localStorage.removeItem('velopos_device_role');
+    localStorage.removeItem('velopos_tenant_mode');
+    localStorage.removeItem('velopos_employee');
+    toast.error('裝置權限已被撤銷', { description: '此裝置已從後台解除綁定。' });
+    navigate('/login');
+  };
 
   async function fetchData() {
     if (!storeId) return;
@@ -121,6 +213,26 @@ export default function POS() {
       // Update names from safe RPC source
       if (tenant_name) setTenantName(tenant_name);
       if (store_name) setStoreName(store_name);
+
+      // Fetch Store & Tenant Settings
+      const [{ data: store }, { data: tenant }] = await Promise.all([
+        supabase.from('stores').select('settings').eq('id', storeId).single(),
+        supabase.from('tenants').select('settings').eq('id', tenantId).single()
+      ]);
+      
+      if (store?.settings) {
+        setIsStoreOpen(store.settings.is_open ?? true);
+      }
+
+      if (tenant?.settings) {
+        setTenantSettings(tenant.settings);
+        // Auto-switch order type if current one is disallowed
+        if (!tenant.settings.allow_dine_in && orderType === 'dine_in') {
+          setOrderType('take_out');
+        } else if (!tenant.settings.allow_take_out && orderType === 'take_out') {
+          setOrderType('dine_in');
+        }
+      }
 
       if (catData) {
         setCategories(catData);
@@ -177,6 +289,23 @@ export default function POS() {
     if (error) toast.error('結單失敗');
     else {
       toast.success(tenantMode === 'single' ? '交易已完成' : '訂單已結單');
+      fetchOrders();
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    if (!window.confirm('確定要刪除此訂單嗎？此動作無法復原。')) return;
+
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', orderId);
+
+    if (error) {
+      console.error('Delete error:', error);
+      toast.error('刪除失敗');
+    } else {
+      toast.success('訂單已刪除');
       fetchOrders();
     }
   };
@@ -272,6 +401,17 @@ export default function POS() {
     }
 
     try {
+      // 1. Verify Device Still Active before submitting
+      const deviceToken = localStorage.getItem('velopos_device_token');
+      const { data: isValid, error: checkError } = await supabase.rpc('check_device_token', { 
+        p_device_token: deviceToken 
+      });
+
+      if (checkError || !isValid) {
+        handleKick();
+        return;
+      }
+
       const { data: orderNumber, error: seqError } = await supabase.rpc('generate_order_number', { p_tenant_id: tenantId });
       if (seqError) throw seqError;
 
@@ -401,6 +541,24 @@ export default function POS() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col p-4 md:p-8 overflow-y-auto bg-slate-50 relative">
+        {!isStoreOpen && activeTab === 'order' && (
+          <div className="absolute inset-0 z-[60] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-6 text-center">
+            <div className="max-w-md bg-white rounded-[2.5rem] p-10 shadow-2xl animate-in zoom-in duration-300">
+              <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Clock className="w-10 h-10 text-red-500" />
+              </div>
+              <h2 className="text-3xl font-black text-slate-900 mb-2">門市暫停營業中</h2>
+              <p className="text-slate-500 font-bold mb-8">目前本門市暫不接受點餐，請洽詢店長開啟營業狀態。</p>
+              <button 
+                onClick={() => fetchData()}
+                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-black transition-all"
+              >
+                <RefreshCw className="w-5 h-5" /> 檢查更新
+              </button>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'order' ? (
           <>
             <header className="mb-8 flex items-center justify-between">
@@ -414,20 +572,24 @@ export default function POS() {
               </div>
               
               <div className="flex bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
-                <button 
-                  onClick={() => setOrderType('dine_in')}
-                  className={cn(
-                    "px-4 py-1.5 rounded-md text-sm font-semibold transition-all cursor-pointer",
-                    orderType === 'dine_in' ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200" : "text-slate-500 hover:text-slate-900"
-                  )}
-                >內用</button>
-                <button 
-                  onClick={() => setOrderType('take_out')}
-                  className={cn(
-                    "px-4 py-1.5 rounded-md text-sm font-semibold transition-all cursor-pointer",
-                    orderType === 'take_out' ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200" : "text-slate-500 hover:text-slate-900"
-                  )}
-                >外帶</button>
+                {tenantSettings.allow_dine_in && (
+                  <button 
+                    onClick={() => setOrderType('dine_in')}
+                    className={cn(
+                      "px-4 py-1.5 rounded-md text-sm font-semibold transition-all cursor-pointer",
+                      orderType === 'dine_in' ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200" : "text-slate-500 hover:text-slate-900"
+                    )}
+                  >內用</button>
+                )}
+                {tenantSettings.allow_take_out && (
+                  <button 
+                    onClick={() => setOrderType('take_out')}
+                    className={cn(
+                      "px-4 py-1.5 rounded-md text-sm font-semibold transition-all cursor-pointer",
+                      orderType === 'take_out' ? "bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200" : "text-slate-500 hover:text-slate-900"
+                    )}
+                  >外帶</button>
+                )}
               </div>
             </header>
 
@@ -483,7 +645,8 @@ export default function POS() {
                   tenantName={tenantName}
                   storeName={storeName}
                   tenantMode={tenantMode}
-                  onClose={() => handleCloseOrder(order.id)} 
+                  onClose={() => handleCloseOrder(order.id)}
+                  onDelete={() => handleDeleteOrder(order.id)}
                 />
               ))}
               {orders.length === 0 && (
@@ -662,7 +825,14 @@ export default function POS() {
   );
 }
 
-function ReceiptCard({ order, tenantName, storeName, tenantMode, onClose }: { order: any, tenantName: string, storeName: string, tenantMode: string, onClose: () => void }) {
+function ReceiptCard({ order, tenantName, storeName, tenantMode, onClose, onDelete }: { 
+  order: any, 
+  tenantName: string, 
+  storeName: string, 
+  tenantMode: string, 
+  onClose: () => void,
+  onDelete: () => void 
+}) {
   const statusConfig = {
     pending: { 
       label: '待確認', 
@@ -688,6 +858,7 @@ function ReceiptCard({ order, tenantName, storeName, tenantMode, onClose }: { or
   };
 
   const config = statusConfig[order.status as keyof typeof statusConfig] || statusConfig.pending;
+  const showDelete = (tenantMode === 'single') || (tenantMode !== 'single' && order.status === 'pending');
 
   return (
     <div className="relative animate-in fade-in slide-in-from-top-4 duration-500 group">
@@ -752,6 +923,16 @@ function ReceiptCard({ order, tenantName, storeName, tenantMode, onClose }: { or
           {config.icon}
           {config.label}
         </div>
+
+        {showDelete && (
+          <button
+            onClick={onDelete}
+            className="w-full bg-red-500 hover:bg-red-600 text-white py-3 rounded-xl font-bold text-base mb-3 flex items-center justify-center gap-2 shadow-lg shadow-red-500/20 transition-all active:scale-[0.98] cursor-pointer"
+          >
+            <Trash2 className="w-5 h-5" />
+            刪除訂單
+          </button>
+        )}
 
         {order.status === 'completed' && (
           <button

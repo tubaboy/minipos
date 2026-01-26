@@ -101,11 +101,22 @@
 @layer base {
   * {
     @apply border-border;
+    -webkit-tap-highlight-color: transparent;
   }
   body {
     @apply bg-background text-foreground;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
+    
+    /* PWA Optimizations */
+    overscroll-behavior-y: contain;
+    touch-action: pan-x pan-y;
+    user-select: none;
+  }
+
+  /* Allow text selection only in inputs */
+  input, textarea {
+    user-select: text;
   }
 }
 

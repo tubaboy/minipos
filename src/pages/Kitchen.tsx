@@ -42,8 +42,8 @@ export default function Kitchen() {
 
     fetchOrders();
 
-    // Subscribe to realtime changes for both orders and order_items
-    const channel = supabase
+    // 1. Subscribe to orders & items
+    const ordersChannel = supabase
       .channel('kitchen_orders_channel')
       .on(
         'postgres_changes',
@@ -52,15 +52,62 @@ export default function Kitchen() {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'order_items' }, // Order items don't strictly need filtering if orders are filtered, but good to keep in mind
+        { event: '*', schema: 'public', table: 'order_items' }, 
         () => fetchOrders()
       )
       .subscribe();
 
+    // 2. Realtime Listener for Device Status (Immediate Kick)
+    const deviceToken = localStorage.getItem('velopos_device_token');
+    const deviceChannel = supabase
+      .channel('device_status')
+      .on(
+        'postgres_changes', 
+        { event: 'DELETE', schema: 'public', table: 'pos_devices' }, 
+        (payload) => {
+          if (payload.old && payload.old.device_token === deviceToken) {
+            handleKick();
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(ordersChannel);
+      supabase.removeChannel(deviceChannel);
     };
   }, []);
+
+  // 3. Heartbeat Mechanism
+  useEffect(() => {
+    const deviceToken = localStorage.getItem('velopos_device_token');
+    if (!deviceToken) return;
+
+    const performHeartbeat = async () => {
+      try {
+        const { error } = await supabase.rpc('get_device_session', { p_device_token: deviceToken });
+        if (error) handleKick();
+      } catch (e) {
+        handleKick();
+      }
+    };
+
+    performHeartbeat();
+    const interval = setInterval(performHeartbeat, 60000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleKick = () => {
+    localStorage.removeItem('velopos_device_token');
+    localStorage.removeItem('velopos_store_id');
+    localStorage.removeItem('velopos_store_name');
+    localStorage.removeItem('velopos_device_role');
+    localStorage.removeItem('velopos_tenant_mode');
+    localStorage.removeItem('velopos_employee');
+    alert('此裝置已解除綁定，即將登出。');
+    navigate('/login');
+  };
 
   async function fetchOrders() {
     if (!storeId) return;

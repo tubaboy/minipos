@@ -30,12 +30,14 @@ type Category = {
 };
 
 import EmployeesModal from './EmployeesModal';
+import StoreDevicesModal from './StoreDevicesModal';
 
 export default function Stores() {
   const [stores, setStores] = useState<StoreType[]>([]);
   const [managers, setManagers] = useState<Record<string, { name: string }>>({});
   const [loading, setLoading] = useState(true);
-  
+  const [userRole, setUserRole] = useState<string | null>(null);
+
   // Store Modal State
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -57,6 +59,9 @@ export default function Stores() {
 
   // Employees Modal State (PIN Staff)
   const [showEmployeesModal, setShowEmployeesModal] = useState(false);
+  
+  // Devices Modal State
+  const [showDevicesModal, setShowDevicesModal] = useState(false);
 
   // Manager Account Modal State (Email/Pwd)
   const [showManagerModal, setShowManagerModal] = useState(false);
@@ -66,16 +71,28 @@ export default function Stores() {
   const [creatingManager, setCreatingManager] = useState(false);
 
   useEffect(() => {
-    fetchStores();
+    fetchInitialData();
   }, []);
 
-  const fetchStores = async () => {
+  const fetchInitialData = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+      setUserRole(profile?.role || null);
+      fetchStores(profile?.role);
+    }
+  };
+
+  const fetchStores = async (role?: string | null) => {
     try {
       setLoading(true);
-      const { data: storesData, error } = await supabase
-        .from('stores')
-        .select('*')
-        .order('created_at', { ascending: false });
+      
+      let query = supabase.from('stores').select('*');
+      
+      // If store_manager, they can only see their store due to RLS, but we can be explicit if needed
+      // Actually RLS is already active, so we just fetch all.
+      
+      const { data: storesData, error } = await query.order('created_at', { ascending: false });
       if (error) throw error;
       setStores(storesData || []);
 
@@ -294,11 +311,15 @@ export default function Stores() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3"><Store className="w-8 h-8 text-primary" />門市管理</h1>
-          <p className="text-slate-500 font-bold mt-1">管理品牌分店與自動化菜單配置</p>
+          <p className="text-slate-500 font-bold mt-1">
+            {userRole === 'store_manager' ? '管理您的門市裝置與員工設定' : '管理品牌分店與自動化菜單配置'}
+          </p>
         </div>
-        <button onClick={() => { setIsEditing(false); setName(''); setAddress(''); setShowModal(true); }} className="bg-primary text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg active:scale-95 transition-all">
-          <Plus className="w-5 h-5" />新增門市
-        </button>
+        {userRole !== 'store_manager' && (
+          <button onClick={() => { setIsEditing(false); setName(''); setAddress(''); setShowModal(true); }} className="bg-primary text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg active:scale-95 transition-all">
+            <Plus className="w-5 h-5" />新增門市
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -311,10 +332,12 @@ export default function Stores() {
             <div key={store.id} className="bg-white border-2 border-slate-100 rounded-3xl p-6 hover:border-primary/50 transition-all group">
               <div className="flex justify-between mb-4">
                 <div className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:text-primary transition-colors"><Store /></div>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => { setIsEditing(true); setCurrentStoreId(store.id); setName(store.name); setAddress(store.address || ''); setShowModal(true); }} className="p-2 hover:bg-slate-50 rounded-lg text-slate-400 hover:text-primary"><Edit2 className="w-4 h-4" /></button>
-                  <button onClick={async () => { if(confirm('刪除門市？')) { await supabase.from('stores').delete().eq('id', store.id); fetchStores(); } }} className="p-2 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
-                </div>
+                {userRole !== 'store_manager' && (
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => { setIsEditing(true); setCurrentStoreId(store.id); setName(store.name); setAddress(store.address || ''); setShowModal(true); }} className="p-2 hover:bg-slate-50 rounded-lg text-slate-400 hover:text-primary"><Edit2 className="w-4 h-4" /></button>
+                    <button onClick={async () => { if(confirm('刪除門市？')) { await supabase.from('stores').delete().eq('id', store.id); fetchStores(); } }} className="p-2 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                )}
               </div>
               <h3 className="text-xl font-black text-slate-900 mb-2">{store.name}</h3>
               <p className="text-slate-500 text-sm font-bold flex items-center gap-2 mb-2"><MapPin className="w-4 h-4" />{store.address || '未設定地址'}</p>
@@ -328,17 +351,24 @@ export default function Stores() {
                 <div className="mb-6 h-9" />
               )}
               
-              <div className="flex gap-2">
-                <button onClick={() => handleOpenMenuModal(store)} className="flex-1 bg-slate-900 text-white py-3 rounded-xl text-sm font-black flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors">
-                  <ClipboardList className="w-4 h-4" />配置菜單
-                </button>
-                <button onClick={() => { setSelectedStore(store); setShowEmployeesModal(true); }} className="flex-1 bg-slate-50 text-slate-600 py-3 rounded-xl text-sm font-black hover:bg-slate-100 transition-colors">
-                  前台員工 PIN
+              <div className="flex gap-2 mb-2">
+                {userRole !== 'store_manager' && (
+                  <button onClick={() => handleOpenMenuModal(store)} className="flex-1 bg-slate-900 text-white py-3 rounded-xl text-sm font-black flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors">
+                    <ClipboardList className="w-4 h-4" />配置菜單
+                  </button>
+                )}
+                <button onClick={() => { setSelectedStore(store); setShowDevicesModal(true); }} className="flex-1 bg-white border-2 border-slate-100 text-slate-600 py-3 rounded-xl text-sm font-black hover:border-slate-300 transition-colors">
+                  裝置管理
                 </button>
               </div>
-              <button onClick={() => { setSelectedStore(store); setShowManagerModal(true); }} className="w-full mt-2 py-3 border-2 border-dashed border-slate-200 text-slate-400 rounded-xl text-sm font-bold hover:border-primary hover:text-primary hover:bg-primary/5 transition-all">
-                + 建立店長後台帳號
+              <button onClick={() => { setSelectedStore(store); setShowEmployeesModal(true); }} className="w-full bg-slate-50 text-slate-600 py-3 rounded-xl text-sm font-black hover:bg-slate-100 transition-colors mb-2">
+                 管理前台員工 (PIN)
               </button>
+              {userRole !== 'store_manager' && (
+                <button onClick={() => { setSelectedStore(store); setShowManagerModal(true); }} className="w-full py-3 border-2 border-dashed border-slate-200 text-slate-400 rounded-xl text-sm font-bold hover:border-primary hover:text-primary hover:bg-primary/5 transition-all">
+                  + 建立店長後台帳號
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -346,6 +376,10 @@ export default function Stores() {
 
       {showEmployeesModal && selectedStore && (
         <EmployeesModal storeId={selectedStore.id} storeName={selectedStore.name} onClose={() => setShowEmployeesModal(false)} />
+      )}
+
+      {showDevicesModal && selectedStore && (
+        <StoreDevicesModal storeId={selectedStore.id} storeName={selectedStore.name} onClose={() => setShowDevicesModal(false)} />
       )}
 
       {showManagerModal && selectedStore && (

@@ -12,6 +12,8 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+codebase.txt
+
 node_modules
 dist
 dist-ssr

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Coffee, Lock, Store, ChevronRight, LogOut, Mail, Key, Loader2, ArrowRight, Monitor } from 'lucide-react';
+import { Store, LogOut, Lock, Smartphone, Loader2, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
@@ -9,142 +9,121 @@ import Logo from '@/components/Logo';
 export default function Login() {
   const navigate = useNavigate();
 
-  // Mode: 'bind' (Admin Login -> Select Store) or 'pos' (Enter PIN)
+  // State
   const [storeId, setStoreId] = useState<string | null>(localStorage.getItem('velopos_store_id'));
   const [storeName, setStoreName] = useState<string | null>(localStorage.getItem('velopos_store_name'));
   const [deviceRole, setDeviceRole] = useState<string | null>(localStorage.getItem('velopos_device_role'));
+  const [deviceToken, setDeviceToken] = useState<string | null>(localStorage.getItem('velopos_device_token'));
 
-  // Bind Mode State
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [stores, setStores] = useState<any[]>([]);
-  const [loadingStores, setLoadingStores] = useState(false);
-  const [loggingIn, setLoggingIn] = useState(false);
-  const [tempBoundStore, setTempBoundStore] = useState<any | null>(null); // For mode selection step
+  // Binding Mode State (Pairing Code)
+  const [pairingCode, setPairingCode] = useState('');
+  const [isPairing, setIsPairing] = useState(false);
 
-  // POS Mode State
+  // POS Mode State (PIN)
   const [pin, setPin] = useState('');
   const [verifyingPin, setVerifyingPin] = useState(false);
+  const [loadingSession, setLoadingSession] = useState(false);
 
   useEffect(() => {
-    // If we are in bind mode and logged in as admin, fetch stores
-    if (!storeId && isAdminLoggedIn) {
-      fetchStores();
+    // If we have a token but no storeId (e.g. page refresh), verify token
+    if (deviceToken && !storeId) {
+      verifyDeviceSession();
     }
-  }, [storeId, isAdminLoggedIn]);
+  }, [deviceToken]);
 
-  const handleAdminLogin = async (e: React.FormEvent) => {
+  const verifyDeviceSession = async () => {
+    if (!deviceToken) return;
+    setLoadingSession(true);
+    try {
+      const { data, error } = await supabase.rpc('get_device_session', { p_device_token: deviceToken });
+      
+      if (error) throw error;
+      
+      // Update local storage just in case
+      localStorage.setItem('velopos_store_id', data.store_id);
+      localStorage.setItem('velopos_store_name', data.store_name);
+      localStorage.setItem('velopos_device_role', data.role);
+      localStorage.setItem('velopos_tenant_mode', data.tenant_mode);
+
+      setStoreId(data.store_id);
+      setStoreName(data.store_name);
+      setDeviceRole(data.role);
+
+    } catch (error) {
+      // Invalid token (revoked?)
+      toast.error('裝置憑證失效，請重新配對');
+      handleUnbind(false); // Silent unbind
+    } finally {
+      setLoadingSession(false);
+    }
+  };
+
+  const handlePairing = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoggingIn(true);
-    try {
-      const { data: { user }, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
-      if (loginError) throw loginError;
-      if (!user) throw new Error('登入失敗');
-
-      // Check Role: Only Partner or Super Admin can bind devices
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single();
-
-      if (profileError || !profile) {
-        await supabase.auth.signOut();
-        throw new Error('無法取得權限資訊');
-      }
-
-      if (profile.role !== 'partner' && profile.role !== 'super_admin') {
-        await supabase.auth.signOut();
-        throw new Error('權限不足：此功能僅限品牌總部帳號使用');
-      }
-      
-      setIsAdminLoggedIn(true);
-      toast.success('驗證成功，請選擇綁定門市');
-    } catch (error: any) {
-      toast.error('驗證失敗', { description: error.message || '請確認帳號密碼' });
-    } finally {
-      setLoggingIn(false);
+    if (pairingCode.length !== 6) {
+      toast.error('請輸入6位數配對碼');
+      return;
     }
-  };
-
-  const fetchStores = async () => {
-    setLoadingStores(true);
-    try {
-      const { data, error } = await supabase.from('stores').select('*').order('created_at');
-      if (error) throw error;
-      setStores(data || []);
-    } catch (error: any) {
-      toast.error('無法載入門市列表', { description: error.message });
-    } finally {
-      setLoadingStores(false);
-    }
-  };
-
-  const handleSelectStore = async (store: any) => {
-    setLoadingStores(true);
-    try {
-      // Fetch tenant mode
-      const { data: tenant, error } = await supabase
-        .from('tenants')
-        .select('mode')
-        .eq('id', store.tenant_id)
-        .single();
-      
-      if (error) throw error;
-
-      if (tenant.mode === 'single') {
-        // Single mode defaults to POS role
-        finalizeBinding(store, 'pos', 'single');
-      } else {
-        // Multi mode requires role selection
-        setTempBoundStore({ ...store, tenant_mode: 'multi' });
-      }
-    } catch (error: any) {
-      toast.error('讀取品牌設定失敗');
-    } finally {
-      setLoadingStores(false);
-    }
-  };
-
-  const finalizeBinding = async (store: any, role: string, mode: string) => {
-    // 1. Save Binding Info
-    localStorage.setItem('velopos_store_id', store.id);
-    localStorage.setItem('velopos_store_name', store.name);
-    localStorage.setItem('velopos_device_role', role);
-    localStorage.setItem('velopos_tenant_mode', mode);
     
-    setStoreId(store.id);
-    setStoreName(store.name);
-    setDeviceRole(role);
+    setIsPairing(true);
+    try {
+      // Get device name (User Agent / OS)
+      const deviceName = `${navigator.platform} - ${new Date().toLocaleDateString()}`;
 
-    // 2. Logout Admin (Security)
-    await supabase.auth.signOut();
-    setIsAdminLoggedIn(false);
-    setTempBoundStore(null);
+      const { data, error } = await supabase.rpc('verify_pairing_code', {
+        p_code: pairingCode,
+        p_device_name: deviceName
+      });
 
-    toast.success(`裝置已綁定至：${store.name} (${role === 'pos' ? '點餐機' : '廚房機'})`);
+      if (error) throw error;
+
+      // Success
+      const { device_token, store_id, store_name, role, tenant_mode } = data;
+
+      localStorage.setItem('velopos_device_token', device_token);
+      localStorage.setItem('velopos_store_id', store_id);
+      localStorage.setItem('velopos_store_name', store_name);
+      localStorage.setItem('velopos_device_role', role);
+      localStorage.setItem('velopos_tenant_mode', tenant_mode);
+
+      setDeviceToken(device_token);
+      setStoreId(store_id);
+      setStoreName(store_name);
+      setDeviceRole(role);
+
+      toast.success('配對成功！');
+    } catch (error: any) {
+      toast.error('配對失敗', { description: error.message || '請確認配對碼是否正確或已過期' });
+    } finally {
+      setIsPairing(false);
+    }
   };
 
-  const handleUnbind = () => {
-    if (confirm('確定要解除此裝置的分店綁定嗎？(需要重新登入總部帳號)')) {
-      localStorage.removeItem('velopos_store_id');
-      localStorage.removeItem('velopos_store_name');
-      localStorage.removeItem('velopos_device_role');
-      localStorage.removeItem('velopos_tenant_mode');
-      setStoreId(null);
-      setStoreName(null);
-      setDeviceRole(null);
-      setPin('');
-      setIsAdminLoggedIn(false);
-      setTempBoundStore(null);
-    }
+  const handleUnbind = (confirmAction = true) => {
+    if (confirmAction && !confirm('確定要解除此裝置綁定嗎？')) return;
+
+    localStorage.removeItem('velopos_device_token');
+    localStorage.removeItem('velopos_store_id');
+    localStorage.removeItem('velopos_store_name');
+    localStorage.removeItem('velopos_device_role');
+    localStorage.removeItem('velopos_tenant_mode');
+    localStorage.removeItem('velopos_employee'); // Also clear employee session
+    
+    setDeviceToken(null);
+    setStoreId(null);
+    setStoreName(null);
+    setDeviceRole(null);
+    setPin('');
   };
 
   // --- PIN Pad Logic ---
   const handleNumberClick = (num: string) => {
-    if (pin.length < 6) {
-      setPin(prev => prev + num);
+    if (pin.length < 4) {
+      const newPin = pin + num;
+      setPin(newPin);
+      if (newPin.length === 4) {
+        handlePinLogin(newPin);
+      }
     }
   };
 
@@ -152,14 +131,15 @@ export default function Login() {
     setPin(prev => prev.slice(0, -1));
   };
 
-  const handlePinLogin = async () => {
-    if (!pin) return;
+  const handlePinLogin = async (overridePin?: string) => {
+    const pinToVerify = overridePin || pin;
+    if (!pinToVerify || pinToVerify.length !== 4) return;
     setVerifyingPin(true);
 
     try {
       const { data, error } = await supabase.rpc('verify_employee_pin', { 
         p_store_id: storeId, 
-        p_pin_code: pin 
+        p_pin_code: pinToVerify 
       });
 
       if (error) throw error;
@@ -177,7 +157,7 @@ export default function Login() {
       }
     } catch (err: any) {
       console.error(err);
-      toast.error('登入失敗', { description: 'PIN 碼錯誤或系統連線問題' });
+      toast.error('登入失敗', { description: 'PIN 碼錯誤' });
       setPin('');
     } finally {
       setVerifyingPin(false);
@@ -186,143 +166,76 @@ export default function Login() {
 
   // --- Renders ---
 
-  // 1. Bind Store Screen
+  // 1. Loading State
+  if (loadingSession) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  // 2. Pairing Screen (No Store Bound)
   if (!storeId) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans">
         <div className="w-full max-w-md bg-white border border-slate-200 rounded-[2rem] shadow-2xl p-8 flex flex-col overflow-hidden relative">
           
-          <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 to-purple-600" />
+          <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-teal-400 to-blue-500" />
 
           <div className="flex items-center gap-4 mb-8">
             <Logo className="w-12 h-12" />
             <div>
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight">VELO 裝置綁定</h1>
-              <p className="text-slate-500 font-bold text-sm">Terminal Setup</p>
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">裝置初始化</h1>
+              <p className="text-slate-500 font-bold text-sm">Device Setup</p>
             </div>
           </div>
 
-          {!isAdminLoggedIn ? (
-            <form onSubmit={handleAdminLogin} className="space-y-4 animate-in slide-in-from-right">
-              <div className="space-y-1">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">總部帳號 (Email)</label>
-                <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input 
-                    type="email" 
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-xl font-bold text-slate-900 outline-none focus:border-slate-900 transition-all"
-                    placeholder="partner@example.com"
-                    required
-                  />
-                </div>
+          <form onSubmit={handlePairing} className="space-y-6 animate-in slide-in-from-right">
+            <div>
+              <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1 mb-2 block">
+                請輸入 6 位數配對碼
+              </label>
+              <div className="relative">
+                <Smartphone className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-slate-400" />
+                <input 
+                  type="text" 
+                  value={pairingCode}
+                  onChange={e => setPairingCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  className="w-full pl-14 pr-4 py-5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-3xl tracking-[0.5em] text-center text-slate-900 outline-none focus:border-slate-900 transition-all placeholder:text-slate-200"
+                  placeholder="000000"
+                  inputMode="numeric"
+                  required
+                />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">密碼</label>
-                <div className="relative">
-                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input 
-                    type="password" 
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-xl font-bold text-slate-900 outline-none focus:border-slate-900 transition-all"
-                    placeholder="••••••••"
-                    required
-                  />
-                </div>
-              </div>
-              <button 
-                type="submit" 
-                disabled={loggingIn}
-                className="w-full py-4 bg-slate-900 text-white rounded-xl font-black text-lg shadow-lg shadow-slate-900/30 hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
-              >
-                {loggingIn ? <Loader2 className="w-5 h-5 animate-spin" /> : <>登入並繼續 <ArrowRight className="w-5 h-5" /></>}
-              </button>
-            </form>
-          ) : tempBoundStore ? (
-            <div className="space-y-6 animate-in slide-in-from-right">
-              <div>
-                <p className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">已選擇門市：{tempBoundStore.name}</p>
-                <h3 className="text-xl font-bold text-slate-900">請選擇此機台的角色</h3>
-              </div>
-              
-              <div className="grid grid-cols-1 gap-3">
-                <button
-                  onClick={() => finalizeBinding(tempBoundStore, 'pos', 'multi')}
-                  className="w-full p-6 flex items-center gap-4 bg-white border-2 border-slate-100 hover:border-teal-500 hover:bg-teal-50/30 rounded-2xl transition-all group text-left"
-                >
-                  <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center group-hover:bg-teal-500 transition-colors">
-                    <Coffee className="w-6 h-6 text-teal-600 group-hover:text-white" />
-                  </div>
-                  <div>
-                    <p className="font-black text-lg text-slate-900">點餐收銀 (POS)</p>
-                    <p className="text-xs text-slate-500 font-bold">負責櫃檯點餐、收款與發票列印</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => finalizeBinding(tempBoundStore, 'kitchen', 'multi')}
-                  className="w-full p-6 flex items-center gap-4 bg-white border-2 border-slate-100 hover:border-orange-500 hover:bg-orange-50/30 rounded-2xl transition-all group text-left"
-                >
-                  <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center group-hover:bg-orange-500 transition-colors">
-                    <Monitor className="w-6 h-6 text-orange-600 group-hover:text-white" />
-                  </div>
-                  <div>
-                    <p className="font-black text-lg text-slate-900">廚房出單 (KDS)</p>
-                    <p className="text-xs text-slate-500 font-bold">負責接收訂單、顯示製作狀態</p>
-                  </div>
-                </button>
-              </div>
-              
-              <button onClick={() => setTempBoundStore(null)} className="w-full py-3 text-slate-400 hover:text-slate-600 font-bold text-sm">返回重新選擇門市</button>
+              <p className="text-xs text-slate-400 mt-2 font-bold text-center">
+                請由店長或總部後台產生配對碼
+              </p>
             </div>
-          ) : (
-            <div className="space-y-3 animate-in slide-in-from-right">
-              <p className="text-sm font-bold text-slate-500 mb-2">請選擇此裝置所屬分店：</p>
-              {loadingStores ? (
-                <div className="text-center py-10 text-slate-400"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />載入分店中...</div>
-              ) : stores.length === 0 ? (
-                 <div className="text-center py-10 text-slate-400 font-bold">找不到分店資料</div>
-              ) : (
-                <div className="max-h-[300px] overflow-y-auto space-y-2 pr-1">
-                  {stores.map(store => (
-                    <button
-                      key={store.id}
-                      onClick={() => handleSelectStore(store)}
-                      className="w-full p-4 flex items-center justify-between bg-white border-2 border-slate-100 hover:border-teal-500 hover:bg-teal-50/30 rounded-xl transition-all group cursor-pointer text-left"
-                    >
-                      <div>
-                        <p className="font-black text-slate-900 group-hover:text-teal-700">{store.name}</p>
-                        <p className="text-xs text-slate-400 font-bold">{store.address || '無地址'}</p>
-                      </div>
-                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center group-hover:bg-teal-500 group-hover:text-white transition-colors">
-                        <ChevronRight className="w-4 h-4" />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <button onClick={() => setIsAdminLoggedIn(false)} className="w-full py-3 text-slate-400 hover:text-slate-600 font-bold text-sm">取消 / 登出</button>
-            </div>
-          )}
+            
+            <button 
+              type="submit" 
+              disabled={isPairing || pairingCode.length !== 6}
+              className="w-full py-4 bg-slate-900 text-white rounded-xl font-black text-lg shadow-lg shadow-slate-900/30 hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
+            >
+              {isPairing ? <Loader2 className="w-5 h-5 animate-spin" /> : <>開始配對 <ArrowRight className="w-5 h-5" /></>}
+            </button>
+          </form>
+          
+          <div className="mt-8 pt-6 border-t border-slate-100 text-center">
+            <button onClick={() => navigate('/admin/login')} className="text-xs font-bold text-slate-300 hover:text-slate-500 transition-colors">
+              我是管理員 (前往後台)
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  // 2. POS Login Screen (PIN)
+  // 3. POS Login Screen (PIN)
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans">
       <div className="w-full max-w-md bg-white border border-slate-200 rounded-[2.5rem] shadow-2xl shadow-slate-200/50 p-10 flex flex-col items-center relative">
-        <button 
-          onClick={handleUnbind}
-          className="absolute top-6 right-6 text-slate-300 hover:text-red-400 transition-colors p-2"
-          title="解除綁定 (測試用)"
-        >
-          <LogOut className="w-5 h-5" />
-        </button>
-
         <div className="mb-6">
           <Logo className="w-20 h-20" />
         </div>
@@ -335,7 +248,7 @@ export default function Login() {
 
         {/* PIN Display */}
         <div className="flex gap-4 mb-12">
-          {[...Array(4)].map((_, i) => ( // Show 4 dots, but allow up to 6
+          {[...Array(4)].map((_, i) => (
             <div
               key={i}
               className={cn(
@@ -346,7 +259,6 @@ export default function Login() {
               )}
             />
           ))}
-          {pin.length > 4 && <div className="flex items-center justify-center font-bold text-slate-400">+{pin.length - 4}</div>}
         </div>
 
         {/* Numpad */}
