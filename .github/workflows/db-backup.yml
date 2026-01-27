@@ -12,9 +12,10 @@ jobs:
       - name: Checkout Backup Repo
         uses: actions/checkout@v4
         with:
-          repository: tubaboy/minipos-backups # 假設目標 Repo 名稱為 minipos-backups
-          token: ${{ secrets.BACKUP_TOKEN }} # 需要先在 GitHub Secret 設定此 Token
+          repository: tubaboy/minipos-backup
+          token: ${{ secrets.BACKUP_TOKEN }}
           path: backup-repo
+          ref: main # 明確指定分支為 main
 
       - name: Install PostgreSQL Client
         run: |
