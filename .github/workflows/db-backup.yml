@@ -9,6 +9,13 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Backup Repo
+        uses: actions/checkout@v4
+        with:
+          repository: tubaboy/minipos-backups # 假設目標 Repo 名稱為 minipos-backups
+          token: ${{ secrets.BACKUP_TOKEN }} # 需要先在 GitHub Secret 設定此 Token
+          path: backup-repo
+
       - name: Install PostgreSQL Client
         run: |
           sudo apt-get update
@@ -25,27 +32,29 @@ jobs:
           DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
         run: |
           set -o pipefail
-          DATE=$(date +%Y%m%d_%H%M%S)
-          
-          # 當使用 Port 6543 (Pooler) 時：
-          # 1. 用戶名必須是 postgres.[PROJECT_REF]
-          # 2. 此主機支援 IPv4，可解決 Network is unreachable 問題
+          DATE=$(date +%Y%m%d_%H%M)
+          mkdir -p backup-repo/backup
           
           echo "Starting backup via Pooler Host: $DB_HOST..."
           
-          pg_dump -h "$DB_HOST" -p 6543 -U "postgres.$PROJECT_REF" -d postgres -v | gzip > backup_$DATE.sql.gz
+          # 直接 Dump 到備份 Repo 的 backup 目錄下
+          pg_dump -h "$DB_HOST" -p 6543 -U "postgres.$PROJECT_REF" -d postgres -v | gzip > backup-repo/backup/db_backup_$DATE.sql.gz
           
-          FILE_SIZE=$(stat -c%s "backup_$DATE.sql.gz")
+          cd backup-repo
+          FILE_SIZE=$(stat -c%s "backup/db_backup_$DATE.sql.gz")
           echo "Backup completed. File size: $FILE_SIZE bytes"
           
           if [ $FILE_SIZE -lt 100 ]; then
-            echo "Error: Backup file is suspiciously small ($FILE_SIZE bytes), it might be empty."
+            echo "Error: Backup file is suspiciously small"
             exit 1
           fi
 
-      - name: Upload Backup Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: db-backup-${{ github.run_id }}
-          path: backup_*.sql.gz
-          retention-days: 30
+      - name: Push to Backup Repo
+        run: |
+          cd backup-repo
+          git config --global user.name "Backup Bot"
+          git config --global user.email "backup-bot@minipos.com"
+          git add backup/*.sql.gz
+          git commit -m "chore: nightly database backup $(date +%Y-%m-%d)"
+          git push
+
