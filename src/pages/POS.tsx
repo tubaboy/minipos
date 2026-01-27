@@ -63,13 +63,15 @@ export default function POS() {
   const [isStoreOpen, setIsStoreOpen] = useState(true);
   const [tenantSettings, setTenantSettings] = useState({
     allow_dine_in: true,
-    allow_take_out: true
+    allow_take_out: true,
+    service_charge_percent: 0
   });
   
   // Modifier Modal State
   const [isModifierModalOpen, setIsModifierModalOpen] = useState(false);
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
   const [tempModifiers, setTempModifiers] = useState<SelectedModifier[]>([]);
+  const [isConnected, setIsConnected] = useState(true);
 
   const navigate = useNavigate();
 
@@ -96,7 +98,7 @@ export default function POS() {
       fetchOrders();
     }
 
-    // 1. Realtime Listener for Orders
+    // 1. Order Listener (Tab sensitive)
     const orderChannel = supabase
       .channel('pos_orders')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `store_id=eq.${storeId}` }, () => {
@@ -104,82 +106,106 @@ export default function POS() {
       })
       .subscribe();
 
-    // 2. Realtime Listener for Device Status (Immediate Kick)
-    const deviceToken = localStorage.getItem('velopos_device_token');
-    const deviceChannel = supabase
-      .channel('device_status')
-      .on(
-        'postgres_changes', 
-        { event: 'DELETE', schema: 'public', table: 'pos_devices' }, 
-        (payload) => {
-          if (payload.old && payload.old.device_token === deviceToken) {
-            handleKick();
-          }
-        }
-      )
-      .subscribe();
-
-    // 3. Realtime Listener for Store Status (Open/Close)
-    const storeChannel = supabase
-      .channel('store_status')
-      .on(
-        'postgres_changes',
-        { 
-          event: 'UPDATE', 
-          schema: 'public', 
-          table: 'stores', 
-          filter: `id=eq.${storeId}` 
-        },
-        (payload) => {
-          if (payload.new && payload.new.settings) {
-            const newIsOpen = payload.new.settings.is_open ?? true;
-            setIsStoreOpen(newIsOpen);
-            
-            // Also update tenant settings if they were part of the payload (optional safety)
-            if (payload.new.settings.allow_dine_in !== undefined) {
-              setTenantSettings(prev => ({
-                ...prev,
-                allow_dine_in: payload.new.settings.allow_dine_in,
-                allow_take_out: payload.new.settings.allow_take_out
-              }));
-            }
-          }
-        }
-      )
-      .subscribe();
-
     return () => {
       supabase.removeChannel(orderChannel);
-      supabase.removeChannel(deviceChannel);
-      supabase.removeChannel(storeChannel);
     };
   }, [activeTab, tenantId]);
 
-  // 3. Heartbeat Mechanism
+  // 2. Global Status Listeners (Store Settings & Device Status)
   useEffect(() => {
-    const deviceToken = localStorage.getItem('velopos_device_token');
-    if (!deviceToken) return;
+    if (!storeId) return;
 
-    const performHeartbeat = async () => {
+    const deviceToken = localStorage.getItem('velopos_device_token');
+
+    const statusChannel = supabase
+      .channel('global_status')
+      // Monitor Device Revocation
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'pos_devices' }, (payload) => {
+        if (payload.old && payload.old.device_token === deviceToken) handleKick();
+      })
+      // Monitor Store Settings (Realtime Sync)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${storeId}` }, (payload) => {
+        console.log("POS: Store update received!", payload.new);
+        if (payload.new && payload.new.settings) {
+          const s = payload.new.settings;
+          setIsStoreOpen(s.is_open ?? true);
+          setTenantSettings(prev => ({
+            ...prev,
+            allow_dine_in: s.allow_dine_in ?? prev.allow_dine_in,
+            allow_take_out: s.allow_take_out ?? prev.allow_take_out,
+            service_charge_percent: s.service_charge_percent ?? prev.service_charge_percent
+          }));
+        }
+      })
+      .subscribe((status) => {
+        console.log("POS: Realtime connection status:", status);
+      });
+
+    return () => {
+      supabase.removeChannel(statusChannel);
+    };
+  }, [storeId]);
+
+  // 3. Robust Heartbeat & Realtime Status
+  useEffect(() => {
+    const token = localStorage.getItem('velopos_device_token');
+    if (!token || !storeId) return;
+
+    console.log("POS: Starting System Monitor for Store:", storeId);
+
+    // Heartbeat Function
+    const runHeartbeat = async () => {
       try {
-        const { error } = await supabase.rpc('get_device_session', { p_device_token: deviceToken });
+        console.log("POS Heartbeat using token:", token.substring(0, 8) + "...");
+        const { data, error } = await supabase.rpc('get_device_session', { p_device_token: token });
         if (error) {
-          console.warn("Heartbeat failed, device might be revoked.");
-          handleKick();
+          setIsConnected(false);
+          if (error.message?.includes('Invalid Token')) handleKick();
+        } else {
+          setIsConnected(true);
+          // Sync settings from heartbeat response as a fallback
+          if (data.store_settings) {
+            const s = data.store_settings;
+            setIsStoreOpen(s.is_open ?? true);
+            setTenantSettings(prev => ({
+              ...prev,
+              allow_dine_in: s.allow_dine_in ?? prev.allow_dine_in,
+              allow_take_out: s.allow_take_out ?? prev.allow_take_out,
+              service_charge_percent: Number(s.service_charge_percent ?? prev.service_charge_percent)
+            }));
+          }
         }
       } catch (e) {
-        handleKick();
+        setIsConnected(false);
       }
     };
 
-    // Update once immediately
-    performHeartbeat();
+    // Realtime Listener
+    const statusChannel = supabase
+      .channel(`pos_realtime_${storeId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${storeId}` }, (payload) => {
+        console.log("POS: Realtime Update Received!", payload.new.settings);
+        const s = payload.new.settings;
+        if (s) {
+          setIsStoreOpen(s.is_open ?? true);
+          setTenantSettings(prev => ({
+            ...prev,
+            allow_dine_in: s.allow_dine_in ?? prev.allow_dine_in,
+            allow_take_out: s.allow_take_out ?? prev.allow_take_out,
+            service_charge_percent: Number(s.service_charge_percent ?? prev.service_charge_percent)
+          }));
+        }
+      })
+      .subscribe();
 
-    // Then interval every 1 minute
-    const interval = setInterval(performHeartbeat, 60000);
+    runHeartbeat();
+    const hbTimer = setInterval(runHeartbeat, 30000);
 
-    return () => clearInterval(interval);
-  }, []);
+    return () => {
+      clearInterval(hbTimer);
+      supabase.removeChannel(statusChannel);
+    };
+  }, [storeId]); // Re-run if storeId changes
 
   const handleKick = () => {
     localStorage.removeItem('velopos_device_token');
@@ -200,38 +226,51 @@ export default function POS() {
       
       if (error) throw error;
       if (!data) return;
+      if (data.error) {
+        toast.error('裝置異常', { description: '找不到門市資料，請重新綁定' });
+        return;
+      }
 
       const { 
         categories: catData, 
         products: prodData, 
         modifier_groups: modGroups, 
         prod_mod_links: prodModLinks,
+        cat_mod_links: catModLinks,
         tenant_name,
-        store_name
+        tenant_settings,
+        tenant_mode,
+        store_name,
+        store_settings
       } = data;
 
-      // Update names from safe RPC source
+      // Update names
       if (tenant_name) setTenantName(tenant_name);
       if (store_name) setStoreName(store_name);
+      if (tenant_mode) localStorage.setItem('velopos_tenant_mode', tenant_mode);
 
-      // Fetch Store & Tenant Settings
-      const [{ data: store }, { data: tenant }] = await Promise.all([
-        supabase.from('stores').select('settings').eq('id', storeId).single(),
-        supabase.from('tenants').select('settings').eq('id', tenantId).single()
-      ]);
-      
-      if (store?.settings) {
-        setIsStoreOpen(store.settings.is_open ?? true);
+      // Handle Settings Merging (Safe from RLS)
+      const combinedSettings = {
+        allow_dine_in: tenant_settings?.allow_dine_in ?? true,
+        allow_take_out: tenant_settings?.allow_take_out ?? true,
+        service_charge_percent: tenant_settings?.service_charge_percent ?? 0
+      };
+
+      if (store_settings) {
+        setIsStoreOpen(store_settings.is_open ?? true);
+        // Store-specific overrides
+        if (store_settings.allow_dine_in !== undefined) combinedSettings.allow_dine_in = store_settings.allow_dine_in;
+        if (store_settings.allow_take_out !== undefined) combinedSettings.allow_take_out = store_settings.allow_take_out;
+        if (store_settings.service_charge_percent !== undefined) combinedSettings.service_charge_percent = store_settings.service_charge_percent;
       }
 
-      if (tenant?.settings) {
-        setTenantSettings(tenant.settings);
-        // Auto-switch order type if current one is disallowed
-        if (!tenant.settings.allow_dine_in && orderType === 'dine_in') {
-          setOrderType('take_out');
-        } else if (!tenant.settings.allow_take_out && orderType === 'take_out') {
-          setOrderType('dine_in');
-        }
+      setTenantSettings(combinedSettings);
+      
+      // Auto-switch order type if current one is disallowed
+      if (!combinedSettings.allow_dine_in && orderType === 'dine_in') {
+        setOrderType('take_out');
+      } else if (!combinedSettings.allow_take_out && orderType === 'take_out') {
+        setOrderType('dine_in');
       }
 
       if (catData) {
@@ -241,14 +280,23 @@ export default function POS() {
 // ... rest of fetchData
 
       if (prodData) {
-        // Map modifiers to products
+        // Map modifiers to products (including category-level ones)
         const productsWithModifiers = prodData.map((p: any) => {
-          const linkedGroupIds = prodModLinks
+          // Direct product links
+          const directGroupIds = prodModLinks
             ?.filter((link: any) => link.product_id === p.id)
-            .map((link: any) => link.modifier_group_id);
+            .map((link: any) => link.modifier_group_id) || [];
+          
+          // Category-inherited links
+          const categoryGroupIds = catModLinks
+            ?.filter((link: any) => link.category_id === p.category_id)
+            .map((link: any) => link.modifier_group_id) || [];
+
+          // Combine and unique
+          const allGroupIds = Array.from(new Set([...directGroupIds, ...categoryGroupIds]));
           
           const groups = modGroups
-            ?.filter((g: any) => linkedGroupIds?.includes(g.id))
+            ?.filter((g: any) => allGroupIds.includes(g.id))
             .map((g: any) => ({
               id: g.id,
               name: g.name,
@@ -361,7 +409,19 @@ export default function POS() {
     return (item.price + modifiersPrice) * item.quantity;
   };
 
-  const total = cart.reduce((sum, item) => sum + calculateItemPrice(item), 0);
+  const subtotal = cart.reduce((sum, item) => sum + calculateItemPrice(item), 0);
+  const serviceChargePercent = Number(tenantSettings.service_charge_percent || 0);
+  const serviceCharge = (orderType === 'dine_in' && serviceChargePercent > 0)
+    ? Math.round(subtotal * (serviceChargePercent / 100))
+    : 0;
+  const total = subtotal + serviceCharge;
+
+  // Debug settings
+  useEffect(() => {
+    if (tenantSettings.service_charge_percent > 0) {
+      console.log("POS: Service Charge Rate detected:", tenantSettings.service_charge_percent, "%");
+    }
+  }, [tenantSettings.service_charge_percent]);
 
   // --- Modifier Modal Logic ---
 
@@ -425,6 +485,7 @@ export default function POS() {
         type: orderType,
         table_number: tableNumber,
         total_amount: total,
+        service_charge: serviceCharge,
         status: initialStatus
       }).select().single();
 
@@ -529,6 +590,15 @@ export default function POS() {
             </button>
           ))}
         </nav>
+
+        <div className="mt-auto px-4 pb-2">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/50 border border-white/5">
+            <div className={cn("w-2 h-2 rounded-full", isConnected ? "bg-emerald-500 animate-pulse" : "bg-red-500")} />
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              {isConnected ? "System Online" : "System Offline"}
+            </span>
+          </div>
+        </div>
 
         <button 
           onClick={() => navigate('/login')}
@@ -805,9 +875,23 @@ export default function POS() {
             </div>
           )}
           
-          <div className="flex justify-between items-end pt-2">
-            <span className="text-slate-500 font-bold text-xs uppercase tracking-wider">應付總額</span>
-            <span className="text-3xl font-black text-slate-900 tracking-tight">{formatCurrency(total)}</span>
+          <div className="space-y-1 pt-2 border-t border-slate-200 mt-2">
+            {cart.length > 0 && (
+              <div className="flex justify-between items-center text-xs font-bold text-slate-400 uppercase tracking-wider">
+                <span>商品小計 Subtotal</span>
+                <span>{formatCurrency(subtotal)}</span>
+              </div>
+            )}
+            {serviceCharge > 0 && (
+              <div className="flex justify-between items-center text-xs font-bold text-teal-600 uppercase tracking-wider">
+                <span>服務費 Service Charge ({serviceChargePercent}%)</span>
+                <span>{formatCurrency(serviceCharge)}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-end pt-2">
+              <span className="text-slate-500 font-bold text-xs uppercase tracking-wider">應付總額 Total</span>
+              <span className="text-3xl font-black text-slate-900 tracking-tight">{formatCurrency(total)}</span>
+            </div>
           </div>
 
           <button
@@ -905,8 +989,18 @@ function ReceiptCard({ order, tenantName, storeName, tenantMode, onClose, onDele
           ))}
         </div>
 
-        <div className="border-t-2 border-double border-slate-300 pt-4 mb-6">
-          <div className="flex justify-between font-black text-3xl text-slate-900">
+        <div className="border-t-2 border-double border-slate-300 pt-4 mb-6 space-y-2">
+          <div className="flex justify-between text-xs font-bold text-slate-500">
+            <span>SUBTOTAL</span>
+            <span>${order.total_amount - (order.service_charge || 0)}</span>
+          </div>
+          {order.service_charge > 0 && (
+            <div className="flex justify-between text-xs font-bold text-teal-600">
+              <span>SERVICE CHARGE</span>
+              <span>${order.service_charge}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-black text-3xl text-slate-900 pt-1">
             <span>TOTAL</span>
             <span>${order.total_amount}</span>
           </div>

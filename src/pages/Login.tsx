@@ -31,6 +31,23 @@ export default function Login() {
     }
   }, [deviceToken]);
 
+  // Heartbeat Mechanism for Online Status
+  useEffect(() => {
+    if (!deviceToken) return;
+
+    const performHeartbeat = async () => {
+      try {
+        await supabase.rpc('get_device_session', { p_device_token: deviceToken });
+      } catch (e) {
+        console.error("Heartbeat failed");
+      }
+    };
+
+    performHeartbeat();
+    const interval = setInterval(performHeartbeat, 30000);
+    return () => clearInterval(interval);
+  }, [deviceToken]);
+
   const verifyDeviceSession = async () => {
     if (!deviceToken) return;
     setLoadingSession(true);
@@ -147,6 +164,23 @@ export default function Login() {
 
       // Login success
       localStorage.setItem('velopos_employee', JSON.stringify(data));
+      
+      // Request Fullscreen
+      try {
+        const doc = document.documentElement;
+        if (doc.requestFullscreen) {
+          doc.requestFullscreen();
+        } else if ((doc as any).webkitRequestFullscreen) {
+          (doc as any).webkitRequestFullscreen();
+        } else if ((doc as any).mozRequestFullScreen) {
+          (doc as any).mozRequestFullScreen();
+        } else if ((doc as any).msRequestFullscreen) {
+          (doc as any).msRequestFullscreen();
+        }
+      } catch (err) {
+        console.warn('Fullscreen request failed:', err);
+      }
+
       toast.success(`歡迎回來，${data.name}`);
       
       // Redirect based on device role
@@ -262,7 +296,7 @@ export default function Login() {
         </div>
 
         {/* Numpad */}
-        <div className="grid grid-cols-3 gap-5 w-full max-w-[300px]">
+        <div className="grid grid-cols-3 gap-5 w-full max-w-[300px] mb-8">
           {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', 'OK'].map((key) => (
             <button
               key={key}

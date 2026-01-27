@@ -136,10 +136,12 @@ export default function StoreDevicesModal({ storeId, storeName, onClose }: Store
               </div>
               
               <button 
-                onClick={() => setActiveCode(null)}
-                className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors p-1"
+                onClick={() => handleGenerateCode(activeCode.role)}
+                disabled={generating}
+                className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors p-1 group"
+                title="更換配對碼"
               >
-                <X className="w-5 h-5" />
+                <RefreshCw className={cn("w-5 h-5", generating && "animate-spin")} />
               </button>
             </div>
           )}

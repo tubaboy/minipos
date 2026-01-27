@@ -23,6 +23,33 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [stores, setStores] = useState<any[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
+  const [brandDefaults, setBrandDefaults] = useState<any>(null);
+
+  const handleStoreChange = (storeId: string) => {
+    setSelectedStoreId(storeId);
+    
+    // Always start from brand defaults as a base to avoid stale state from previous store
+    const base = brandDefaults || {
+      service_charge_percent: 0,
+      allow_dine_in: true,
+      allow_take_out: true
+    };
+
+    if (storeId === 'all') {
+      setTenantSettings(base);
+    } else {
+      const selectedStore = stores.find(s => s.id === storeId);
+      // If store has specific settings, use them; otherwise, use brand defaults
+      setTenantSettings({
+        service_charge_percent: selectedStore?.settings?.service_charge_percent ?? base.service_charge_percent,
+        currency_symbol: 'NT$',
+        allow_dine_in: selectedStore?.settings?.allow_dine_in ?? base.allow_dine_in,
+        allow_take_out: selectedStore?.settings?.allow_take_out ?? base.allow_take_out
+      });
+    }
+  };
 
   // Form States
   const [profile, setProfile] = useState({ name: '', email: '' });
@@ -63,8 +90,41 @@ export default function Settings() {
         setRole(profileData.role);
         setProfile({ name: profileData.name, email: user.email || '' });
         
+        // 1. Load Brand Defaults First
+        let bDefaults = {
+          service_charge_percent: 0,
+          currency_symbol: 'NT$',
+          allow_dine_in: true,
+          allow_take_out: true
+        };
+
         if (profileData.tenants) {
-          setTenantSettings(profileData.tenants.settings || tenantSettings);
+          bDefaults = profileData.tenants.settings || bDefaults;
+          setBrandDefaults(bDefaults);
+        }
+
+        // 2. Fetch all stores
+        if (profileData.role === 'partner') {
+          const { data: storesData } = await supabase
+            .from('stores')
+            .select('*')
+            .eq('tenant_id', profileData.tenant_id)
+            .order('name');
+          
+          setStores(storesData || []);
+
+          // 3. Set form based on current selection
+          if (selectedStoreId === 'all') {
+            setTenantSettings(bDefaults);
+          } else {
+            const current = storesData?.find(s => s.id === selectedStoreId);
+            setTenantSettings({
+              service_charge_percent: current?.settings?.service_charge_percent ?? bDefaults.service_charge_percent,
+              currency_symbol: 'NT$',
+              allow_dine_in: current?.settings?.allow_dine_in ?? bDefaults.allow_dine_in,
+              allow_take_out: current?.settings?.allow_take_out ?? bDefaults.allow_take_out
+            });
+          }
         }
         
         if (profileData.stores) {
@@ -76,22 +136,19 @@ export default function Settings() {
           });
         }
 
-        // 2. Fetch Online Devices (Active in last 10 minutes)
-        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-        let deviceQuery = supabase
-          .from('pos_devices')
-          .select('*, stores(name)')
-          .gt('last_active_at', tenMinutesAgo);
-          
-        if (profileData.role === 'store_manager') {
-          deviceQuery = deviceQuery.eq('store_id', profileData.store_id);
-        } else if (profileData.role === 'partner') {
-          deviceQuery = deviceQuery.eq('tenant_id', profileData.tenant_id);
-        }
-        
-        const { data: devices } = await deviceQuery.order('last_active_at', { ascending: false });
-        setAllDevices(devices || []);
-      }
+              // 2. Fetch All Bound Devices
+              let deviceQuery = supabase
+                .from('pos_devices')
+                .select('*, stores(name)');
+                
+              if (profileData.role === 'store_manager') {
+                deviceQuery = deviceQuery.eq('store_id', profileData.store_id);
+              } else if (profileData.role === 'partner') {
+                deviceQuery = deviceQuery.eq('tenant_id', profileData.tenant_id);
+              }
+              
+              const { data: devices } = await deviceQuery.order('last_active_at', { ascending: false });
+              setAllDevices(devices || []);      }
 
       // 3. Fetch Current Device Info (if on POS)
       const token = localStorage.getItem('velopos_device_token');
@@ -133,15 +190,68 @@ export default function Settings() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', user?.id).single();
-      
-      const { error } = await supabase
-        .from('tenants')
-        .update({ settings: tenantSettings })
-        .eq('id', prof?.tenant_id);
-      if (error) throw error;
-      toast.success('品牌設定已儲存');
-    } catch (error) {
-      toast.error('儲存失敗');
+      if (!prof) throw new Error('找不到所屬品牌');
+
+      const currentTenantId = prof.tenant_id;
+
+      // 1. Update Tenant Global Settings (Brand Defaults)
+      if (selectedStoreId === 'all') {
+        const { error: tenantError } = await supabase
+          .from('tenants')
+          .update({ settings: tenantSettings })
+          .eq('id', currentTenantId);
+        if (tenantError) throw tenantError;
+        setBrandDefaults(tenantSettings);
+      }
+
+      // 2. Update Target Store(s)
+      const { data: targetStores, error: fetchError } = await (selectedStoreId === 'all' 
+        ? supabase.from('stores').select('id, settings').eq('tenant_id', currentTenantId)
+        : supabase.from('stores').select('id, settings').eq('id', selectedStoreId));
+
+      if (fetchError) throw fetchError;
+
+      if (targetStores && targetStores.length > 0) {
+        console.log("Found stores to update:", targetStores.length);
+        
+        for (const s of targetStores) {
+          const newSettings = {
+            ...(s.settings || {}),
+            allow_dine_in: tenantSettings.allow_dine_in,
+            allow_take_out: tenantSettings.allow_take_out,
+            service_charge_percent: tenantSettings.service_charge_percent
+          };
+
+          const { error: updateError } = await supabase
+            .from('stores')
+            .update({ settings: newSettings })
+            .eq('id', s.id);
+          
+          if (updateError) throw updateError;
+        }
+
+        // Update local stores state to avoid reloading jumps
+        setStores(prev => prev.map(s => {
+          if (selectedStoreId === 'all' || s.id === selectedStoreId) {
+            return {
+              ...s,
+              settings: {
+                ...(s.settings || {}),
+                allow_dine_in: tenantSettings.allow_dine_in,
+                allow_take_out: tenantSettings.allow_take_out,
+                service_charge_percent: tenantSettings.service_charge_percent
+              }
+            };
+          }
+          return s;
+        }));
+      }
+
+      const storeNameLabel = selectedStoreId === 'all' ? '所有門市' : stores.find(s => s.id === selectedStoreId)?.name || '門市';
+      toast.success(selectedStoreId === 'all' ? `品牌及所有門市設定已同步` : `[${storeNameLabel}] 門市專屬設定已更新`);
+    } catch (error: any) {
+      console.error("Save Error Detailed:", error);
+      toast.error(`儲存失敗: ${error.message || '未知錯誤'}`);
     } finally {
       setSaving(false);
     }
@@ -152,19 +262,28 @@ export default function Settings() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: prof } = await supabase.from('profiles').select('store_id').eq('id', user?.id).single();
+      if (!prof?.store_id) throw new Error('找不到關聯門市 ID');
+
+      const { data: currentStore, error: fetchError } = await supabase.from('stores').select('settings').eq('id', prof.store_id).single();
+      if (fetchError) throw fetchError;
       
-      const { error } = await supabase
+      const { error: updateError } = await supabase
         .from('stores')
         .update({ 
           address: storeInfo.address,
           phone: storeInfo.phone,
-          settings: { ...storeInfo, is_open: storeInfo.is_open }
+          settings: { 
+            ...(currentStore?.settings || {}),
+            is_open: storeInfo.is_open 
+          }
         })
-        .eq('id', prof?.store_id);
-      if (error) throw error;
+        .eq('id', prof.store_id);
+      
+      if (updateError) throw updateError;
       toast.success('門市資訊已更新');
-    } catch (error) {
-      toast.error('儲存失敗');
+    } catch (error: any) {
+      console.error("Store Save Error:", error);
+      toast.error(`儲存失敗: ${error.message || '權限不足'}`);
     } finally {
       setSaving(false);
     }
@@ -280,19 +399,56 @@ export default function Settings() {
               </div>
               <div>
                 <h3 className="text-xl font-black text-slate-900">品牌營運參數</h3>
-                <p className="text-teal-600/60 font-bold text-xs uppercase tracking-widest">Brand Global Settings</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <p className="text-teal-600/60 font-bold text-xs uppercase tracking-widest">Brand Global Settings</p>
+                  <span className={cn(
+                    "text-[10px] px-2 py-0.5 rounded-full font-black uppercase tracking-tighter",
+                    selectedStoreId === 'all' ? "bg-red-100 text-red-600" : "bg-teal-100 text-teal-600"
+                  )}>
+                    {selectedStoreId === 'all' 
+                      ? "編輯全品牌預設" 
+                      : `正在編輯門市: ${stores.find(s => s.id === selectedStoreId)?.name}${
+                          !stores.find(s => s.id === selectedStoreId)?.settings?.service_charge_percent && 
+                          stores.find(s => s.id === selectedStoreId)?.settings?.service_charge_percent !== 0 
+                          ? " (目前使用品牌預設)" : ""
+                        }`}
+                  </span>
+                </div>
               </div>
             </div>
             <button 
               onClick={handleSaveTenantSettings}
               disabled={saving}
-              className="bg-teal-600 text-white px-6 py-2.5 rounded-xl font-black text-sm flex items-center gap-2 hover:bg-teal-700 transition-all active:scale-95"
+              className={cn(
+                "px-6 py-2.5 rounded-xl font-black text-sm flex items-center gap-2 transition-all active:scale-95",
+                selectedStoreId === 'all' ? "bg-red-600 hover:bg-red-700 text-white" : "bg-teal-600 text-white hover:bg-teal-700"
+              )}
             >
-              <Save className="w-4 h-4" /> 儲存品牌設定
+              <Save className="w-4 h-4" /> 
+              {selectedStoreId === 'all' ? '同步至所有門市' : '儲存門市設定'}
             </button>
           </div>
           <div className="p-8 space-y-8">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-4">
+                <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                  <Store className="w-4 h-4 text-teal-500" /> 套用門市
+                </h4>
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">選擇設定對象</label>
+                  <select 
+                    value={selectedStoreId}
+                    onChange={e => handleStoreChange(e.target.value)}
+                    className="w-full px-5 py-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-900 focus:border-teal-500 outline-none transition-all appearance-none"
+                  >
+                    <option value="all">所有門市 (同步套用)</option>
+                    {stores.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div className="space-y-4">
                 <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-teal-500" /> 費用計算
@@ -421,35 +577,52 @@ export default function Settings() {
               </div>
             ) : (
               <div className="grid gap-4">
-                {allDevices.map(dev => (
-                  <div key={dev.id} className="flex items-center justify-between p-5 bg-slate-50 border border-slate-100 rounded-2xl group hover:border-indigo-200 transition-all">
-                    <div className="flex items-center gap-4">
-                      <div className={cn(
-                        "w-10 h-10 rounded-xl flex items-center justify-center",
-                        dev.role === 'pos' ? "bg-teal-100 text-teal-700" : "bg-orange-100 text-orange-700"
-                      )}>
-                        {dev.role === 'pos' ? <Smartphone className="w-5 h-5" /> : <SettingsIcon className="w-5 h-5" />}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-black text-slate-900">{dev.device_name || '未命名裝置'}</p>
-                          {dev.device_token === localStorage.getItem('velopos_device_token') && (
-                            <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-bold uppercase">本機</span>
-                          )}
+                {allDevices.map(dev => {
+                  // 恢復精確判斷：10 分鐘內有心跳皆視為在線
+                  const lastActive = new Date(dev.last_active_at).getTime();
+                  const isOnline = lastActive > Date.now() - 10 * 60 * 1000;
+                  return (
+                    <div key={dev.id} className="flex items-center justify-between p-5 bg-slate-50 border border-slate-100 rounded-2xl group hover:border-indigo-200 transition-all">
+                      <div className="flex items-center gap-4">
+                        <div className="relative">
+                          <div className={cn(
+                            "w-10 h-10 rounded-xl flex items-center justify-center",
+                            dev.role === 'pos' ? "bg-teal-100 text-teal-700" : "bg-orange-100 text-orange-700"
+                          )}>
+                            {dev.role === 'pos' ? <Smartphone className="w-5 h-5" /> : <SettingsIcon className="w-5 h-5" />}
+                          </div>
+                          <div className={cn(
+                            "absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white",
+                            isOnline ? "bg-emerald-500" : "bg-slate-300"
+                          )} />
                         </div>
-                        <p className="text-xs text-slate-400 font-bold">
-                          {dev.stores?.name} • {dev.role === 'pos' ? '點餐機' : '廚房機'} • 最後上線: {new Date(dev.last_active_at).toLocaleString()}
-                        </p>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-black text-slate-900">{dev.device_name || '未命名裝置'}</p>
+                            {dev.device_token === localStorage.getItem('velopos_device_token') && (
+                              <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-bold uppercase">本機</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-400 font-bold">
+                            {dev.stores?.name} • {dev.role === 'pos' ? '點餐機' : '廚房機'}
+                          </p>
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            最後上線: {new Date(dev.last_active_at).toLocaleString()} 
+                            <span className="ml-2 text-indigo-500">
+                              ({Math.floor((Date.now() - new Date(dev.last_active_at).getTime()) / 60000)} 分鐘前)
+                            </span>
+                          </p>
+                        </div>
                       </div>
+                      <button 
+                        onClick={() => handleRevokeDevice(dev.id, dev.device_token === localStorage.getItem('velopos_device_token'))}
+                        className="opacity-0 group-hover:opacity-100 p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all flex items-center gap-2 font-bold text-xs"
+                      >
+                        <LogOut className="w-4 h-4" /> 解除綁定
+                      </button>
                     </div>
-                    <button 
-                      onClick={() => handleRevokeDevice(dev.id, dev.device_token === localStorage.getItem('velopos_device_token'))}
-                      className="opacity-0 group-hover:opacity-100 p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all flex items-center gap-2 font-bold text-xs"
-                    >
-                      <LogOut className="w-4 h-4" /> 解除綁定
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

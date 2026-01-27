@@ -87,10 +87,17 @@ export default function Stores() {
     try {
       setLoading(true);
       
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = await supabase.from('profiles').select('tenant_id, role').eq('id', user?.id).single();
+      
       let query = supabase.from('stores').select('*');
       
-      // If store_manager, they can only see their store due to RLS, but we can be explicit if needed
-      // Actually RLS is already active, so we just fetch all.
+      if (profile?.role === 'partner') {
+        query = query.eq('tenant_id', profile.tenant_id);
+      } else if (profile?.role === 'store_manager') {
+        // RLS will handle this, but being explicit is safer
+        query = query.eq('id', (window as any).localStorage.getItem('velopos_store_id') || '');
+      }
       
       const { data: storesData, error } = await query.order('created_at', { ascending: false });
       if (error) throw error;
