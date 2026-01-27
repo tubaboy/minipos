@@ -15,7 +15,7 @@ jobs:
           repository: tubaboy/minipos-backup
           token: ${{ secrets.BACKUP_TOKEN }}
           path: backup-repo
-          ref: main # 明確指定分支為 main
+          persist-credentials: false # 關閉預設憑證，我們後面手動用 Token 推送
 
       - name: Install PostgreSQL Client
         run: |
@@ -51,11 +51,15 @@ jobs:
           fi
 
       - name: Push to Backup Repo
+        env:
+          BACKUP_TOKEN: ${{ secrets.BACKUP_TOKEN }}
         run: |
           cd backup-repo
           git config --global user.name "Backup Bot"
           git config --global user.email "backup-bot@minipos.com"
+          # 使用 Token 重新設定 Remote URL 以確保有 Push 權限
+          git remote set-url origin "https://x-access-token:${BACKUP_TOKEN}@github.com/tubaboy/minipos-backup.git"
           git add backup/*.sql.gz
           git commit -m "chore: nightly database backup $(date +%Y-%m-%d)"
-          git push
+          git push origin main
 
