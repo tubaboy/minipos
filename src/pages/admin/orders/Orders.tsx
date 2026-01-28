@@ -4,17 +4,14 @@ import {
   ClipboardList, 
   Search, 
   Filter, 
-  ChevronRight, 
   Clock, 
   CheckCircle2, 
   XCircle, 
   ShoppingBag,
-  Calendar,
   MoreVertical,
   Eye,
   Printer,
-  Trash2,
-  AlertCircle
+  Trash2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';

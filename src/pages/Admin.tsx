@@ -30,7 +30,6 @@ import Reports from './admin/reports/Reports';
 import Orders from './admin/orders/Orders';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
-const SettingsPlaceholder = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">系統設定功能開發中...</div>;
 
 // --- Main Layout ---
 

@@ -22,6 +22,7 @@ interface Order {
   type: 'dine_in' | 'take_out';
   table_number?: string;
   created_at: string;
+  updated_at?: string;
   order_items: OrderItem[];
 }
 

@@ -2,14 +2,12 @@ import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
   BarChart3, 
-  Calendar, 
   TrendingUp, 
   ShoppingBag, 
   DollarSign, 
   Store,
   Coffee,
-  ChevronDown,
-  Filter
+  ChevronDown
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
