@@ -11,7 +11,9 @@ import {
   Loader2,
   Bell,
   CheckCircle2,
-  SmartphoneNfc
+  SmartphoneNfc,
+  Lock,
+  ShieldCheck
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -53,6 +55,9 @@ export default function Settings() {
 
   // Form States
   const [profile, setProfile] = useState({ name: '', email: '' });
+  const [passwords, setPasswords] = useState({ new: '', confirm: '' });
+  const [updatingPassword, setUpdatingPassword] = useState(false);
+  
   const [tenantSettings, setTenantSettings] = useState({
     service_charge_percent: 0,
     currency_symbol: 'NT$',
@@ -182,6 +187,39 @@ export default function Settings() {
       toast.error('儲存失敗');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwords.new || !passwords.confirm) return;
+    if (passwords.new !== passwords.confirm) {
+      toast.error('兩次輸入的新密碼不一致');
+      return;
+    }
+    if (passwords.new.length < 6) {
+      toast.error('新密碼長度至少需 6 個字元');
+      return;
+    }
+
+    setUpdatingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ 
+        password: passwords.new 
+      });
+      if (error) throw error;
+      
+      toast.success('密碼更新成功，請使用新密碼重新登入');
+      
+      // Delay slightly to let user see the message, then sign out
+      setTimeout(async () => {
+        await supabase.auth.signOut();
+        navigate('/admin/login');
+      }, 1500);
+
+    } catch (error: any) {
+      toast.error('密碼更新失敗', { description: error.message });
+      setUpdatingPassword(false);
     }
   };
 
@@ -383,10 +421,58 @@ export default function Settings() {
               className="w-full px-5 py-3.5 bg-slate-100 border-2 border-slate-100 rounded-2xl font-bold text-slate-400 cursor-not-allowed"
             />
           </div>
-          <div className="md:col-span-2">
-            <p className="text-xs text-slate-400 font-bold ml-1 italic">* 密碼變更功能目前尚未開放，如需重設請洽總部管理員。</p>
+        </div>
+      </section>
+
+      {/* 1.1 Security Section */}
+      <section className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-rose-500/10 rounded-2xl flex items-center justify-center text-rose-500">
+              <Lock className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-slate-900">帳號安全設定</h3>
+              <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Security Settings</p>
+            </div>
           </div>
         </div>
+        <form onSubmit={handleUpdatePassword} className="p-8 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">設定新密碼</label>
+              <input 
+                type="password" 
+                placeholder="請輸入新密碼 (至少 6 碼)"
+                value={passwords.new}
+                onChange={e => setPasswords({ ...passwords, new: e.target.value })}
+                className="w-full px-5 py-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-900 focus:border-rose-500 outline-none transition-all"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-black text-slate-400 uppercase tracking-wider ml-1">確認新密碼</label>
+              <input 
+                type="password" 
+                placeholder="再次輸入新密碼"
+                value={passwords.confirm}
+                onChange={e => setPasswords({ ...passwords, confirm: e.target.value })}
+                className="w-full px-5 py-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-slate-900 focus:border-rose-500 outline-none transition-all"
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button 
+              type="submit"
+              disabled={updatingPassword || !passwords.new || !passwords.confirm}
+              className="bg-rose-500 text-white px-8 py-3.5 rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-rose-600 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale"
+            >
+              {updatingPassword ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-5 h-5" />}
+              更新登入密碼
+            </button>
+          </div>
+        </form>
       </section>
 
       {/* 2. Tenant Settings (Partner Only) */}
