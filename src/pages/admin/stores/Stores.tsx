@@ -88,15 +88,25 @@ export default function Stores() {
       setLoading(true);
       
       const { data: { user } } = await supabase.auth.getUser();
-      const { data: profile } = await supabase.from('profiles').select('tenant_id, role').eq('id', user?.id).single();
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('tenant_id, role, store_id')
+        .eq('id', user?.id)
+        .single();
       
       let query = supabase.from('stores').select('*');
       
       if (profile?.role === 'partner') {
         query = query.eq('tenant_id', profile.tenant_id);
       } else if (profile?.role === 'store_manager') {
-        // RLS will handle this, but being explicit is safer
-        query = query.eq('id', (window as any).localStorage.getItem('velopos_store_id') || '');
+        if (profile.store_id) {
+          query = query.eq('id', profile.store_id);
+        } else {
+          // If no store assigned, return empty list instead of throwing UUID error
+          setStores([]);
+          setLoading(false);
+          return;
+        }
       }
       
       const { data: storesData, error } = await query.order('created_at', { ascending: false });

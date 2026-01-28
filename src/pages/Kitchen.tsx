@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, createContext, useContext } from 'react';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { CheckCircle2, Clock, PlayCircle, LogOut, RefreshCw } from 'lucide-react';
@@ -25,14 +25,38 @@ interface Order {
   order_items: OrderItem[];
 }
 
+interface KDSSettings {
+  overdue_minutes: number;
+  show_dine_in: boolean;
+  show_take_out: boolean;
+  auto_clear_completed_minutes: number;
+}
+
+const KitchenContext = createContext<{ settings: KDSSettings }>({
+  settings: {
+    overdue_minutes: 15,
+    show_dine_in: true,
+    show_take_out: true,
+    auto_clear_completed_minutes: 10
+  }
+});
+
 export default function Kitchen() {
   const [orders, setOrders] = useState<Order[]>([]);
+  const [settings, setSettings] = useState<KDSSettings>({
+    overdue_minutes: 15,
+    show_dine_in: true,
+    show_take_out: true,
+    auto_clear_completed_minutes: 10
+  });
+  
   const navigate = useNavigate();
 
   // Load employee session
   const employeeData = localStorage.getItem('velopos_employee');
   const employee = employeeData ? JSON.parse(employeeData) : null;
   const storeId = employee?.store_id;
+  const deviceToken = localStorage.getItem('velopos_device_token');
 
   useEffect(() => {
     if (!employee) {
@@ -40,9 +64,9 @@ export default function Kitchen() {
       return;
     }
 
-    fetchOrders();
+    initKitchen();
 
-    // 1. Subscribe to orders & items
+    // Subscribe to changes
     const ordersChannel = supabase
       .channel('kitchen_orders_channel')
       .on(
@@ -57,8 +81,6 @@ export default function Kitchen() {
       )
       .subscribe();
 
-    // 2. Realtime Listener for Device Status (Immediate Kick)
-    const deviceToken = localStorage.getItem('velopos_device_token');
     const deviceChannel = supabase
       .channel('device_status')
       .on(
@@ -72,31 +94,62 @@ export default function Kitchen() {
       )
       .subscribe();
 
+    const storeChannel = supabase
+      .channel('store_settings')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${storeId}` },
+        (payload) => {
+          if (payload.new.settings?.kds_settings) {
+            setSettings(payload.new.settings.kds_settings);
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(ordersChannel);
       supabase.removeChannel(deviceChannel);
+      supabase.removeChannel(storeChannel);
     };
   }, []);
 
-  // 3. Heartbeat Mechanism
-  useEffect(() => {
-    const deviceToken = localStorage.getItem('velopos_device_token');
-    if (!deviceToken) return;
+  async function initKitchen() {
+    if (!storeId) return;
 
-    const performHeartbeat = async () => {
-      try {
-        const { error } = await supabase.rpc('get_device_session', { p_device_token: deviceToken });
-        if (error) handleKick();
-      } catch (e) {
-        handleKick();
+    try {
+      const { data: store } = await supabase
+        .from('stores')
+        .select('settings')
+        .eq('id', storeId)
+        .single();
+      
+      if (store?.settings?.kds_settings) {
+        setSettings(store.settings.kds_settings);
       }
-    };
 
-    performHeartbeat();
-    const interval = setInterval(performHeartbeat, 60000);
+      fetchOrders();
+    } catch (e) {
+      console.error('Init error:', e);
+    }
+  }
 
-    return () => clearInterval(interval);
-  }, []);
+  async function fetchOrders() {
+    if (!storeId) return;
+
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        order_items (*)
+      `)
+      .eq('store_id', storeId)
+      .in('status', ['pending', 'processing', 'completed'])
+      .order('created_at', { ascending: true });
+
+    if (error) console.error('Fetch error:', error);
+    else setOrders(data || []);
+  }
 
   const handleKick = () => {
     localStorage.removeItem('velopos_device_token');
@@ -109,23 +162,6 @@ export default function Kitchen() {
     navigate('/login');
   };
 
-  async function fetchOrders() {
-    if (!storeId) return;
-
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`
-        *,
-        order_items (*)
-      `)
-      .eq('store_id', storeId) // Filter by store
-      .in('status', ['pending', 'processing', 'completed'])
-      .order('created_at', { ascending: true });
-
-    if (error) console.error('Fetch error:', error);
-    else setOrders(data || []);
-  }
-
   async function updateStatus(orderId: string, status: Order['status']) {
     const { error } = await supabase
       .from('orders')
@@ -135,102 +171,122 @@ export default function Kitchen() {
     if (error) alert('更新失敗');
   }
 
-  const pendingOrders = orders.filter(o => o.status === 'pending');
-  const processingOrders = orders.filter(o => o.status === 'processing');
-  const completedOrders = orders.filter(o => o.status === 'completed');
+  const filteredOrders = useMemo(() => {
+    const now = new Date().getTime();
+    return orders.filter(order => {
+      // 1. Type filter
+      if (order.type === 'dine_in' && !settings.show_dine_in) return false;
+      if (order.type === 'take_out' && !settings.show_take_out) return false;
+
+      // 2. Auto hide completed (KDS UI Filter only)
+      if (order.status === 'completed' && settings.auto_clear_completed_minutes > 0) {
+        const completedTime = new Date(order.updated_at || order.created_at).getTime();
+        const diffMinutes = (now - completedTime) / 60000;
+        if (diffMinutes > settings.auto_clear_completed_minutes) return false;
+      }
+
+      return true;
+    });
+  }, [orders, settings]);
+
+  const pendingOrders = filteredOrders.filter(o => o.status === 'pending');
+  const processingOrders = filteredOrders.filter(o => o.status === 'processing');
+  const completedOrders = filteredOrders.filter(o => o.status === 'completed');
 
   const storeName = localStorage.getItem('velopos_store_name');
 
   return (
-    <div className="h-screen bg-[#1E1B4B] flex flex-col font-sans text-white">
-      {/* Header */}
-      <header className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between backdrop-blur-md">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
-            <Clock className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold">{storeName} 廚房接單系統</h1>
-            <p className="text-xs text-white/40 font-bold uppercase tracking-widest">
-              {employee?.name} (職位: {employee?.role === 'store_manager' ? '店長' : '廚務'})
-            </p>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-6">
-          <div className="flex gap-4 text-sm font-bold">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
-              <span>待確認: {pendingOrders.length}</span>
+    <KitchenContext.Provider value={{ settings }}>
+      <div className="h-screen bg-[#1E1B4B] flex flex-col font-sans text-white">
+        {/* Header */}
+        <header className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between backdrop-blur-md">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+              <Clock className="w-6 h-6 text-white" />
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse" />
-              <span>處理中: {processingOrders.length}</span>
+            <div>
+              <h1 className="text-xl font-bold">{storeName} 廚房接單系統</h1>
+              <p className="text-xs text-white/40 font-bold uppercase tracking-widest">
+                {employee?.name} (職位: {employee?.role === 'store_manager' ? '店長' : '廚務'})
+              </p>
             </div>
           </div>
-          <button 
-            onClick={() => navigate('/login')}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
-        </div>
-      </header>
+          
+          <div className="flex items-center gap-6">
+            <div className="flex gap-4 text-sm font-bold">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
+                <span>待確認: {pendingOrders.length}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse" />
+                <span>處理中: {processingOrders.length}</span>
+              </div>
+            </div>
+            <button 
+              onClick={() => navigate('/login')}
+              className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+        </header>
 
-      {/* Main Kanban Board */}
-      <main className="flex-1 overflow-hidden flex p-6 gap-6">
-        {/* Column: Pending */}
-        <section className="flex-1 flex flex-col gap-4 min-w-[350px]">
-          <div className="flex items-center gap-2 text-amber-500 font-black uppercase tracking-widest text-sm mb-2">
-            <RefreshCw className="w-4 h-4 animate-spin-slow" />
-            待確認訂單
-          </div>
-          <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
-            {pendingOrders.map(order => (
-              <OrderCard key={order.id} order={order} onAction={() => updateStatus(order.id, 'processing')} actionLabel="接單" actionIcon={<PlayCircle className="w-5 h-5" />} actionColor="bg-amber-500" />
-            ))}
-          </div>
-        </section>
+        {/* Main Kanban Board */}
+        <main className="flex-1 overflow-hidden flex p-6 gap-6">
+          {/* Column: Pending */}
+          <section className="flex-1 flex flex-col gap-4 min-w-[350px]">
+            <div className="flex items-center gap-2 text-amber-500 font-black uppercase tracking-widest text-sm mb-2">
+              <RefreshCw className="w-4 h-4 animate-spin-slow" />
+              待確認訂單
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+              {pendingOrders.map(order => (
+                <OrderCard key={order.id} order={order} onAction={() => updateStatus(order.id, 'processing')} actionLabel="接單" actionIcon={<PlayCircle className="w-5 h-5" />} actionColor="bg-amber-500" />
+              ))}
+            </div>
+          </section>
 
-        {/* Column: Processing */}
-        <section className="flex-1 flex flex-col gap-4 min-w-[350px] border-x border-white/5 px-6">
-          <div className="flex items-center gap-2 text-blue-400 font-black uppercase tracking-widest text-sm mb-2">
-            <Clock className="w-4 h-4" />
-            處理中
-          </div>
-          <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
-            {processingOrders.map(order => (
-              <OrderCard key={order.id} order={order} onAction={() => updateStatus(order.id, 'completed')} actionLabel="完成" actionIcon={<CheckCircle2 className="w-5 h-5" />} actionColor="bg-blue-500" />
-            ))}
-          </div>
-        </section>
+          {/* Column: Processing */}
+          <section className="flex-1 flex flex-col gap-4 min-w-[350px] border-x border-white/5 px-6">
+            <div className="flex items-center gap-2 text-blue-400 font-black uppercase tracking-widest text-sm mb-2">
+              <Clock className="w-4 h-4" />
+              處理中
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+              {processingOrders.map(order => (
+                <OrderCard key={order.id} order={order} onAction={() => updateStatus(order.id, 'completed')} actionLabel="完成" actionIcon={<CheckCircle2 className="w-5 h-5" />} actionColor="bg-blue-500" />
+              ))}
+            </div>
+          </section>
 
-        {/* Column: Completed */}
-        <section className="flex-1 flex flex-col gap-4 min-w-[350px]">
-          <div className="flex items-center gap-2 text-emerald-400 font-black uppercase tracking-widest text-sm mb-2">
-            <CheckCircle2 className="w-4 h-4" />
-            已完成 (待出餐)
-          </div>
-          <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
-            {completedOrders.map(order => (
-              <OrderCard 
-                key={order.id} 
-                order={order} 
-                // No action for kitchen on completed orders
-                onAction={() => {}} 
-                actionLabel="待出餐" 
-                actionIcon={<CheckCircle2 className="w-5 h-5" />} 
-                actionColor="bg-emerald-500/50 cursor-default hover:brightness-100 active:scale-100" 
-              />
-            ))}
-          </div>
-        </section>
-      </main>
-    </div>
+          {/* Column: Completed */}
+          <section className="flex-1 flex flex-col gap-4 min-w-[350px]">
+            <div className="flex items-center gap-2 text-emerald-400 font-black uppercase tracking-widest text-sm mb-2">
+              <CheckCircle2 className="w-4 h-4" />
+              已完成 (待出餐)
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+              {completedOrders.map(order => (
+                <OrderCard 
+                  key={order.id} 
+                  order={order} 
+                  onAction={() => {}} 
+                  actionLabel="待出餐" 
+                  actionIcon={<CheckCircle2 className="w-5 h-5" />} 
+                  actionColor="bg-emerald-500/50 cursor-default hover:brightness-100 active:scale-100" 
+                />
+              ))}
+            </div>
+          </section>
+        </main>
+      </div>
+    </KitchenContext.Provider>
   );
 }
 
 function OrderCard({ order, onAction, actionLabel, actionIcon, actionColor }: { order: Order, onAction: () => void, actionLabel: string, actionIcon: React.ReactNode, actionColor: string }) {
+  const { settings } = useContext(KitchenContext);
   const [now, setNow] = useState(new Date().getTime());
 
   useEffect(() => {
@@ -239,7 +295,7 @@ function OrderCard({ order, onAction, actionLabel, actionIcon, actionColor }: { 
   }, []);
 
   const timeElapsed = Math.floor((now - new Date(order.created_at).getTime()) / 60000);
-  const isUrgent = timeElapsed >= 15 && order.status !== 'completed';
+  const isUrgent = timeElapsed >= settings.overdue_minutes && order.status !== 'completed';
   
   return (
     <div className={cn(

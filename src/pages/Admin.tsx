@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -6,15 +7,14 @@ import {
   BarChart3, 
   LogOut,
   ChevronRight,
-  TrendingUp,
-  ShoppingBag,
   Users2,
   Building2,
   Settings as SettingsIcon,
   ChefHat,
   Store,
   Tag,
-  Settings2
+  Settings2,
+  ClipboardList
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Employees from './admin/employees/Employees';
@@ -24,78 +24,13 @@ import Stores from './admin/stores/Stores';
 import Categories from './admin/categories/Categories';
 import Modifiers from './admin/modifiers/Modifiers';
 import Settings from './admin/Settings';
+import Overview from './admin/Overview';
+import KitchenSettings from './admin/kitchen/KitchenSettings';
+import Reports from './admin/reports/Reports';
+import Orders from './admin/orders/Orders';
 import { supabase } from '@/lib/supabase';
-import { useEffect, useState } from 'react';
 import Logo from '@/components/Logo';
-
-// --- Sub-components (Stat Cards & Overview) ---
-
-const StatCard = ({ title, value, icon, trend }: any) => (
-  <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all group">
-    <div className="flex justify-between items-start mb-4">
-      <div className="p-3 bg-primary/5 rounded-2xl group-hover:bg-primary/10 transition-colors">
-        {icon}
-      </div>
-      {trend && <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-lg">{trend}</span>}
-    </div>
-    <p className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">{title}</p>
-    <p className="text-3xl font-black text-slate-900">{value}</p>
-  </div>
-);
-
-const CategoryProgress = ({ name, value, color }: any) => (
-  <div className="space-y-2">
-    <div className="flex justify-between text-sm font-bold text-slate-900">
-      <span>{name}</span>
-      <span>{value}%</span>
-    </div>
-    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-      <div className={cn("h-full rounded-full", color)} style={{ width: `${value}%` }} />
-    </div>
-  </div>
-);
-
-const Overview = () => (
-  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      <StatCard title="今日銷售" value="NT$ 12,480" icon={<TrendingUp className="text-emerald-500" />} trend="+12.5%" />
-      <StatCard title="訂單數量" value="84" icon={<ShoppingBag className="text-blue-500" />} trend="+3.2%" />
-      <StatCard title="熱銷商品" value="拿鐵咖啡" icon={<Coffee className="text-amber-500" />} />
-      <StatCard title="在線員工" value="3" icon={<Users2 className="text-purple-500" />} />
-    </div>
-    
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2 bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-        <h3 className="text-xl font-bold text-slate-900 mb-6">銷售趨勢</h3>
-        <div className="h-[300px] flex items-end gap-4">
-          {[40, 60, 45, 90, 65, 80, 50].map((h, i) => (
-            <div key={i} className="flex-1 bg-primary/10 rounded-t-xl relative group">
-              <div 
-                className="bg-primary rounded-t-xl transition-all duration-1000 group-hover:bg-primary/80" 
-                style={{ height: `${h}%` }} 
-              />
-            </div>
-          ))}
-        </div>
-        <div className="flex justify-between mt-4 text-xs font-bold text-slate-400 uppercase">
-          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
-        </div>
-      </div>
-      
-      <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-        <h3 className="text-xl font-bold text-slate-900 mb-6">熱門類別</h3>
-        <div className="space-y-6">
-          <CategoryProgress name="義式咖啡" value={75} color="bg-primary" />
-          <CategoryProgress name="茶飲系列" value={45} color="bg-blue-500" />
-          <CategoryProgress name="精緻甜點" value={25} color="bg-amber-500" />
-        </div>
-      </div>
-    </div>
-  </div>
-);
-
-const Reports = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">銷售報表功能開發中...</div>;
-const KitchenSettings = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">廚房設定功能開發中...</div>;
+const SettingsPlaceholder = () => <div className="p-8 bg-white rounded-3xl border border-slate-100 font-bold text-slate-400">系統設定功能開發中...</div>;
 
 // --- Main Layout ---
 
@@ -178,6 +113,12 @@ export default function Admin() {
       icon: <BarChart3 className="w-5 h-5" />, 
       label: '銷售報表',
       roles: ['partner', 'store_manager'] 
+    },
+    { 
+      path: '/admin/orders', 
+      icon: <ClipboardList className="w-5 h-5" />, 
+      label: '訂單管理',
+      roles: ['store_manager'] 
     },
     { 
       path: '/admin/settings', 
@@ -263,6 +204,7 @@ export default function Admin() {
           <Route path="products" element={<Products />} />
           <Route path="kitchen" element={<KitchenSettings />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="orders" element={<Orders />} />
           <Route path="settings" element={<Settings />} />
         </Routes>
       </main>
