@@ -12,8 +12,7 @@ import {
   AlertCircle,
   Building2,
   Calendar,
-  ChevronDown,
-  BarChart3
+  ChevronDown
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Link } from 'react-router-dom';
@@ -506,6 +505,27 @@ export default function Overview() {
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
       
+      {/* Welcome Banner */}
+      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-3xl p-8 text-white shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative overflow-hidden">
+        <div className="relative z-10">
+          <h2 className="text-3xl font-black mb-2">{greeting}，{userName} 👋</h2>
+          <p className="text-slate-400 font-medium">今天是 {new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</p>
+        </div>
+        <div className="relative z-10 flex gap-4">
+          <div className="text-right">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">系統狀態</p>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+              <span className="font-bold">運作正常</span>
+            </div>
+          </div>
+        </div>
+        
+        {/* Decorative Background */}
+        <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+        <div className="absolute bottom-0 left-0 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+      </div>
+
       {/* Filters Bar */}
       <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
         <div className="flex items-center gap-2">
