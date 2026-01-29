@@ -9,7 +9,11 @@ import {
   ArrowRight,
   Clock,
   DollarSign,
-  AlertCircle
+  AlertCircle,
+  Building2,
+  Calendar,
+  ChevronDown,
+  BarChart3
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Link } from 'react-router-dom';
@@ -19,12 +23,13 @@ interface OverviewStats {
   totalSales: number;
   orderCount: number;
   avgOrderValue: number;
-  topProduct: string;
+  topProduct?: string;
   activeStores?: number; // Partner only
   activeEmployees?: number; // Store Manager only
+  activeTenants?: number; // Super Admin only
 }
 
-interface StorePerformance {
+interface PerformanceItem {
   id: string;
   name: string;
   sales: number;
@@ -38,6 +43,16 @@ interface RecentOrder {
   created_at: string;
   status: string;
   items_count: number;
+}
+
+interface Tenant {
+  id: string;
+  name: string;
+}
+
+interface TrendPoint {
+  label: string;
+  value: number;
 }
 
 // Components
@@ -74,11 +89,142 @@ const SectionHeader = ({ title, icon: Icon, link, linkText }: any) => (
   </div>
 );
 
+const TrendChart = ({ data }: { data: TrendPoint[] }) => {
+  const maxVal = Math.max(...data.map(p => p.value), 100);
+  const chartHeight = 320;
+  const padding = 20;
+  const width = 800; // Reference width for SVG coordinate system
+  
+  if (data.length === 0) return null;
+
+  const points = data.map((p, i) => {
+    const x = (i / (data.length - 1 || 1)) * (width - padding * 2) + padding;
+    const y = chartHeight - ((p.value / maxVal) * (chartHeight - padding * 2) + padding);
+    return { x, y, value: p.value, label: p.label };
+  });
+
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${chartHeight} L ${points[0].x} ${chartHeight} Z`;
+
+  return (
+    <div className="relative group/chart w-full overflow-x-auto pb-4 custom-scrollbar">
+      <div className="min-w-[600px] h-[320px] relative">
+        <svg 
+          viewBox={`0 0 ${width} ${chartHeight}`} 
+          className="w-full h-full overflow-visible"
+          preserveAspectRatio="none"
+        >
+          {/* Grid Lines */}
+          {[0, 0.25, 0.5, 0.75, 1].map((v, i) => (
+            <line
+              key={i}
+              x1={padding}
+              y1={chartHeight - (v * (chartHeight - padding * 2) + padding)}
+              x2={width - padding}
+              y2={chartHeight - (v * (chartHeight - padding * 2) + padding)}
+              stroke="#f1f5f9"
+              strokeWidth="1"
+            />
+          ))}
+
+          {/* Area Fill */}
+          <path
+            d={areaPath}
+            fill="url(#chartGradient)"
+            className="transition-all duration-1000 ease-out"
+          />
+
+          {/* Line */}
+          <path
+            d={linePath}
+            fill="none"
+            stroke="var(--color-primary)"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="transition-all duration-1000 ease-out"
+          />
+
+          {/* Points */}
+          {points.map((p, i) => (
+            <g key={i} className="group/point">
+              <circle
+                cx={p.x}
+                cy={p.y}
+                r="4"
+                className="fill-white stroke-primary stroke-2 transition-all duration-300 opacity-0 group-hover/chart:opacity-100"
+              />
+              {/* Tooltip Target */}
+              <rect
+                x={p.x - 10}
+                y={0}
+                width={20}
+                height={chartHeight}
+                fill="transparent"
+                className="cursor-pointer"
+              />
+            </g>
+          ))}
+
+          <defs>
+            <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--color-primary)" stopOpacity="0.15" />
+              <stop offset="100%" stopColor="var(--color-primary)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+        </svg>
+
+        {/* Labels & Tooltips (HTML Overlay for better rendering) */}
+        <div className="absolute inset-0 pointer-events-none">
+          {points.filter((_, i) => data.length < 15 || i % Math.floor(data.length / 8) === 0).map((p, i) => (
+            <div
+              key={i}
+              className="absolute text-[10px] font-bold text-slate-400 -bottom-1 -translate-x-1/2"
+              style={{ left: `${(p.x / width) * 100}%` }}
+            >
+              {p.label}
+            </div>
+          ))}
+        </div>
+
+        {/* Interactive Tooltip Helper */}
+        <div className="absolute inset-0 flex">
+           {points.map((p, i) => (
+             <div 
+               key={i} 
+               className="flex-1 group/tooltip relative cursor-crosshair pointer-events-auto"
+             >
+               <div className="opacity-0 group-hover/tooltip:opacity-100 absolute bottom-[100%] left-1/2 -translate-x-1/2 mb-4 bg-slate-900 text-white text-[10px] py-2 px-3 rounded-xl whitespace-nowrap z-30 shadow-2xl transition-all duration-200">
+                  <p className="font-black text-xs mb-0.5">${p.value.toLocaleString()}</p>
+                  <p className="text-slate-400 font-bold">{p.label}</p>
+                  <div className="w-2 h-2 bg-slate-900 rotate-45 absolute -bottom-1 left-1/2 -translate-x-1/2"></div>
+               </div>
+               {/* Vertical Hover Line */}
+               <div className="absolute top-0 bottom-0 left-1/2 w-px bg-primary/20 opacity-0 group-hover/tooltip:opacity-100 pointer-events-none" />
+             </div>
+           ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+type DateRange = 'today' | 'week' | 'month' | 'custom';
+
 export default function Overview() {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<string | null>(null);
   const [userName, setUserName] = useState('');
   
+  // Filters
+  const [dateRange, setDateRange] = useState<DateRange>('today');
+  const [customRange, setCustomRange] = useState({
+    start: new Date().toISOString().split('T')[0],
+    end: new Date().toISOString().split('T')[0]
+  });
+  const [selectedTenantId, setSelectedTenantId] = useState<string>('all');
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+
   const [stats, setStats] = useState<OverviewStats>({
     totalSales: 0,
     orderCount: 0,
@@ -86,21 +232,25 @@ export default function Overview() {
     topProduct: '-'
   });
   
-  const [storePerformance, setStorePerformance] = useState<StorePerformance[]>([]);
+  const [performanceItems, setPerformanceItems] = useState<PerformanceItem[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
-  const [hourlySales, setHourlySales] = useState<number[]>(new Array(24).fill(0));
+  const [trendData, setTrendData] = useState<TrendPoint[]>([]);
 
   useEffect(() => {
-    fetchDashboardData();
+    fetchInitialData();
   }, []);
 
-  const fetchDashboardData = async () => {
-    setLoading(true);
+  useEffect(() => {
+    if (role) {
+      fetchDashboardData();
+    }
+  }, [role, dateRange, selectedTenantId, customRange]);
+
+  const fetchInitialData = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // 1. Get Profile
       const { data: profile } = await supabase
         .from('profiles')
         .select('role, tenant_id, store_id, name')
@@ -111,49 +261,158 @@ export default function Overview() {
       setRole(profile.role);
       setUserName(profile.name || 'User');
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayIso = today.toISOString();
+      if (profile.role === 'super_admin') {
+        const { data: tenantsData } = await supabase
+          .from('tenants')
+          .select('id, name')
+          .order('name');
+        setTenants(tenantsData || []);
+      }
+    } catch (error) {
+      console.error('Error fetching initial data:', error);
+    }
+  };
 
-      // 2. Base Query for Orders (Today)
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role, tenant_id, store_id')
+        .eq('id', user.id)
+        .single();
+
+      if (!profile) return;
+
+      // Date Filtering
+      let startIso: string;
+      let endIso: string = new Date().toISOString();
+      
+      if (dateRange === 'today') {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        startIso = d.toISOString();
+      } else if (dateRange === 'week') {
+        const d = new Date();
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        d.setDate(diff);
+        d.setHours(0, 0, 0, 0);
+        startIso = d.toISOString();
+      } else if (dateRange === 'month') {
+        const d = new Date();
+        d.setDate(1);
+        d.setHours(0, 0, 0, 0);
+        startIso = d.toISOString();
+      } else {
+        // Custom
+        const s = new Date(customRange.start);
+        s.setHours(0, 0, 0, 0);
+        startIso = s.toISOString();
+        
+        const e = new Date(customRange.end);
+        e.setHours(23, 59, 59, 999);
+        endIso = e.toISOString();
+      }
+
+      // Base Query
       let ordersQuery = supabase
         .from('orders')
-        .select('*, items:order_items(product_name, quantity, price)')
-        .eq('tenant_id', profile.tenant_id)
-        .gte('created_at', todayIso)
-        .order('created_at', { ascending: false });
+        .select('id, total_amount, created_at, tenant_id, store_id, status');
 
-      if (profile.role === 'store_manager' && profile.store_id) {
-        ordersQuery = ordersQuery.eq('store_id', profile.store_id);
+      // Role & Tenant Filtering
+      if (profile.role === 'super_admin') {
+        if (selectedTenantId !== 'all') {
+          ordersQuery = ordersQuery.eq('tenant_id', selectedTenantId);
+        }
+      } else {
+        ordersQuery = ordersQuery.eq('tenant_id', profile.tenant_id);
+        if (profile.role === 'store_manager' && profile.store_id) {
+          ordersQuery = ordersQuery.eq('store_id', profile.store_id);
+        }
       }
+
+      // Apply Date Filter
+      ordersQuery = ordersQuery.gte('created_at', startIso).lte('created_at', endIso);
 
       const { data: orders } = await ordersQuery;
       const safeOrders = orders || [];
 
-      // 3. Calculate Stats
+      // Calculate Stats
       const totalSales = safeOrders.reduce((sum, o) => sum + (o.total_amount || 0), 0);
       const orderCount = safeOrders.length;
       const avgOrderValue = orderCount > 0 ? totalSales / orderCount : 0;
 
-      // Top Product
-      const productCounts: Record<string, number> = {};
-      safeOrders.forEach(o => {
-        o.items.forEach((i: any) => {
-          productCounts[i.product_name] = (productCounts[i.product_name] || 0) + i.quantity;
+      // Trend Aggregation
+      const aggregatedTrend: TrendPoint[] = [];
+      if (dateRange === 'today') {
+        // Hourly
+        const hoursMap = new Array(24).fill(0);
+        safeOrders.forEach(o => {
+          const h = new Date(o.created_at).getHours();
+          hoursMap[h] += o.total_amount || 0;
         });
-      });
-      const topProduct = Object.entries(productCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '無';
+        for (let i = 0; i < 24; i++) {
+          aggregatedTrend.push({ label: `${i}:00`, value: hoursMap[i] });
+        }
+      } else {
+        // Daily
+        const dailyMap: Record<string, number> = {};
+        const startDate = new Date(startIso);
+        const endDate = new Date(endIso);
+        
+        // Initialize all days in range with 0
+        const current = new Date(startDate);
+        while (current <= endDate) {
+          const dateStr = current.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' });
+          dailyMap[dateStr] = 0;
+          current.setDate(current.getDate() + 1);
+        }
 
-      // Hourly Sales
-      const hours = new Array(24).fill(0);
-      safeOrders.forEach(o => {
-        const h = new Date(o.created_at).getHours();
-        hours[h] += o.total_amount || 0;
-      });
-      setHourlySales(hours);
+        safeOrders.forEach(o => {
+          const dateStr = new Date(o.created_at).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' });
+          if (dailyMap[dateStr] !== undefined) {
+            dailyMap[dateStr] += o.total_amount || 0;
+          }
+        });
 
-      // 4. Role Specific Data
-      if (profile.role === 'partner') {
+        Object.entries(dailyMap).forEach(([label, value]) => {
+          aggregatedTrend.push({ label, value });
+        });
+      }
+      setTrendData(aggregatedTrend);
+
+      // Role Specific Data
+      if (profile.role === 'super_admin') {
+        // Super Admin: Partner Performance
+        const { data: allTenants } = await supabase
+          .from('tenants')
+          .select('id, name');
+
+        if (allTenants) {
+          const performance = allTenants.map(t => {
+            const tenantOrders = safeOrders.filter(o => o.tenant_id === t.id);
+            return {
+              id: t.id,
+              name: t.name,
+              sales: tenantOrders.reduce((sum, o) => sum + (o.total_amount || 0), 0),
+              orderCount: tenantOrders.length
+            };
+          }).filter(p => p.orderCount > 0 || selectedTenantId === 'all')
+            .sort((a, b) => b.sales - a.sales);
+          
+          setPerformanceItems(performance);
+          setStats({ 
+            totalSales, 
+            orderCount, 
+            avgOrderValue, 
+            activeTenants: allTenants.length 
+          });
+        }
+      } else if (profile.role === 'partner') {
         // Partner: Store Performance
         const { data: stores } = await supabase
           .from('stores')
@@ -170,23 +429,52 @@ export default function Overview() {
               orderCount: storeOrders.length
             };
           }).sort((a, b) => b.sales - a.sales);
-          setStorePerformance(performance);
+          setPerformanceItems(performance);
         }
-        setStats({ totalSales, orderCount, avgOrderValue, topProduct, activeStores: stores?.length || 0 });
+
+        // Top Product for Partner
+        const { data: topProdOrders } = await supabase
+          .from('orders')
+          .select('items:order_items(product_name, quantity)')
+          .eq('tenant_id', profile.tenant_id)
+          .gte('created_at', startIso)
+          .lte('created_at', endIso);
+        
+        const productCounts: Record<string, number> = {};
+        topProdOrders?.forEach(o => {
+          (o.items as any[]).forEach(i => {
+            productCounts[i.product_name] = (productCounts[i.product_name] || 0) + i.quantity;
+          });
+        });
+        const topProduct = Object.entries(productCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '無';
+
+        setStats({ 
+          totalSales, 
+          orderCount, 
+          avgOrderValue, 
+          topProduct, 
+          activeStores: stores?.length || 0 
+        });
 
       } else {
-        // Store Manager: Recent Orders & Active Employees (Mock for now or fetch)
-        setRecentOrders(safeOrders.slice(0, 5).map(o => ({
+        // Store Manager: Recent Orders
+        const { data: recentOrdersData } = await supabase
+          .from('orders')
+          .select('id, order_number, total_amount, created_at, status, items:order_items(id)')
+          .eq('store_id', profile.store_id)
+          .order('created_at', { ascending: false })
+          .limit(5);
+
+        setRecentOrders((recentOrdersData || []).map(o => ({
           id: o.id,
           order_no: o.order_number || o.id.slice(0, 8).toUpperCase(),
           total_amount: o.total_amount,
           created_at: o.created_at,
           status: o.status,
-          items_count: o.items.length
+          items_count: (o.items as any[]).length
         })));
         
-        // Mock active employees count for now or fetch from profiles
-        setStats({ totalSales, orderCount, avgOrderValue, topProduct, activeEmployees: 3 });
+        setStats({ totalSales, orderCount, avgOrderValue, activeEmployees: 3 });
       }
 
     } catch (error) {
@@ -196,8 +484,6 @@ export default function Overview() {
     }
   };
 
-  const maxChartValue = Math.max(...hourlySales, 100); // Minimum scale
-
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
     if (hour >= 5 && hour < 11) return '早安';
@@ -206,7 +492,7 @@ export default function Overview() {
     return '晚安';
   }, []);
 
-  if (loading) {
+  if (loading && !role) {
     return (
       <div className="h-[50vh] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -218,65 +504,133 @@ export default function Overview() {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
       
-      {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-3xl p-8 text-white shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative overflow-hidden">
-        <div className="relative z-10">
-          <h2 className="text-3xl font-black mb-2">{greeting}，{userName} 👋</h2>
-          <p className="text-slate-400 font-medium">今天是 {new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</p>
+      {/* Filters Bar */}
+      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+        <div className="flex items-center gap-2">
+          <div className="p-2 bg-primary/10 rounded-xl">
+            <Calendar className="w-5 h-5 text-primary" />
+          </div>
+          <div className="flex bg-slate-100 p-1 rounded-2xl">
+            {[
+              { id: 'today', label: '本日' },
+              { id: 'week', label: '本週' },
+              { id: 'month', label: '本月' },
+              { id: 'custom', label: '自訂' },
+            ].map((range) => (
+              <button
+                key={range.id}
+                onClick={() => setDateRange(range.id as DateRange)}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-sm font-bold transition-all",
+                  dateRange === range.id 
+                    ? "bg-white text-slate-900 shadow-sm" 
+                    : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
+
+          {dateRange === 'custom' && (
+            <div className="flex items-center gap-2 animate-in slide-in-from-left-2 duration-300">
+              <input 
+                type="date" 
+                value={customRange.start}
+                onChange={(e) => setCustomRange(prev => ({ ...prev, start: e.target.value }))}
+                className="bg-slate-100 border-none rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-primary/20 outline-none"
+              />
+              <span className="text-slate-400 text-xs font-bold">至</span>
+              <input 
+                type="date" 
+                value={customRange.end}
+                onChange={(e) => setCustomRange(prev => ({ ...prev, end: e.target.value }))}
+                className="bg-slate-100 border-none rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:ring-2 focus:ring-primary/20 outline-none"
+              />
+            </div>
+          )}
         </div>
-        <div className="relative z-10 flex gap-4">
-          <div className="text-right">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">系統狀態</p>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-              <span className="font-bold">運作正常</span>
+
+        {role === 'super_admin' && (
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="p-2 bg-amber-100 rounded-xl">
+              <Building2 className="w-5 h-5 text-amber-600" />
+            </div>
+            <div className="relative flex-1 sm:w-64">
+              <select
+                value={selectedTenantId}
+                onChange={(e) => setSelectedTenantId(e.target.value)}
+                className="w-full bg-slate-100 border-none rounded-2xl px-4 py-2.5 font-bold text-slate-700 appearance-none focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
+              >
+                <option value="all">所有合作夥伴</option>
+                {tenants.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
-        </div>
-        
-        {/* Decorative Background */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-        <div className="absolute bottom-0 left-0 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+        )}
       </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
-          title="今日營收" 
+          title={dateRange === 'today' ? "今日營收" : "累積營收"} 
           value={`$${stats.totalSales.toLocaleString()}`} 
           icon={<DollarSign className="w-6 h-6 text-emerald-600" />} 
           colorClass="bg-emerald-100"
-          trend="+8.2%"
+          trend={dateRange === 'today' ? "+8.2%" : undefined}
         />
         <StatCard 
-          title="今日訂單" 
-          value={stats.orderCount} 
+          title={dateRange === 'today' ? "今日訂單" : "累積訂單"} 
+          value={stats.orderCount.toLocaleString()} 
           icon={<ShoppingBag className="w-6 h-6 text-blue-600" />} 
           colorClass="bg-blue-100"
-          trend="+12%"
+          trend={dateRange === 'today' ? "+12%" : undefined}
         />
-        <StatCard 
-          title="熱銷冠軍" 
-          value={stats.topProduct} 
-          icon={<Coffee className="w-6 h-6 text-amber-600" />} 
-          colorClass="bg-amber-100"
-        />
-        {role === 'partner' ? (
-          <StatCard 
-            title="營運門市" 
-            value={stats.activeStores} 
-            icon={<Store className="w-6 h-6 text-purple-600" />} 
-            colorClass="bg-purple-100"
-          />
+        
+        {role === 'super_admin' ? (
+          <>
+            <StatCard 
+              title="客單均價" 
+              value={`$${Math.round(stats.avgOrderValue).toLocaleString()}`} 
+              icon={<Users2 className="w-6 h-6 text-purple-600" />} 
+              colorClass="bg-purple-100"
+            />
+            <StatCard 
+              title="品牌客戶" 
+              value={stats.activeTenants} 
+              icon={<Building2 className="w-6 h-6 text-amber-600" />} 
+              colorClass="bg-amber-100"
+            />
+          </>
         ) : (
-          <StatCard 
-            title="平均客單" 
-            value={`$${Math.round(stats.avgOrderValue)}`} 
-            icon={<Users2 className="w-6 h-6 text-purple-600" />} 
-            colorClass="bg-purple-100"
-          />
+          <>
+            <StatCard 
+              title="熱銷冠軍" 
+              value={stats.topProduct} 
+              icon={<Coffee className="w-6 h-6 text-amber-600" />} 
+              colorClass="bg-amber-100"
+            />
+            {role === 'partner' ? (
+              <StatCard 
+                title="營運門市" 
+                value={stats.activeStores} 
+                icon={<Store className="w-6 h-6 text-purple-600" />} 
+                colorClass="bg-purple-100"
+              />
+            ) : (
+              <StatCard 
+                title="平均客單" 
+                value={`$${Math.round(stats.avgOrderValue).toLocaleString()}`} 
+                icon={<Users2 className="w-6 h-6 text-purple-600" />} 
+                colorClass="bg-purple-100"
+              />
+            )}
+          </>
         )}
       </div>
       
@@ -284,50 +638,54 @@ export default function Overview() {
         
         {/* Main Chart Section */}
         <div className="xl:col-span-2 bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-          <SectionHeader title="即時銷售趨勢 (24H)" icon={TrendingUp} />
+          <SectionHeader 
+            title={dateRange === 'today' ? "即時銷售趨勢 (24H)" : "銷售表現趨勢"} 
+            icon={TrendingUp} 
+          />
           
-          <div className="h-[320px] w-full flex items-end gap-2 sm:gap-4 overflow-x-auto pb-6 pt-10 px-2 scrollbar-hide">
-            {hourlySales.map((val, i) => {
-              const heightPercent = (val / maxChartValue) * 100;
-              const isCurrentHour = i === new Date().getHours();
-              
-              return (
-                <div key={i} className="flex-1 min-w-[24px] flex flex-col justify-end group relative h-full">
-                  <div className="relative w-full flex-1 flex items-end">
-                    <div 
-                      className={cn(
-                        "w-full rounded-t-lg transition-all duration-700 ease-out relative group-hover:bg-opacity-80",
-                        isCurrentHour ? "bg-primary animate-pulse" : "bg-slate-200 group-hover:bg-primary/60"
-                      )}
-                      style={{ height: `${Math.max(heightPercent, 4)}%` }} // Min height 4% for visibility
-                    >
-                      {/* Tooltip */}
-                      <div className="opacity-0 group-hover:opacity-100 absolute bottom-[100%] left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[10px] py-1.5 px-3 rounded-xl whitespace-nowrap pointer-events-none transition-all duration-300 z-20 shadow-xl transform group-hover:-translate-y-1">
-                        <span className="font-bold block text-xs mb-0.5">${val.toLocaleString()}</span>
-                        <span className="text-slate-400">{i}:00 - {i}:59</span>
-                        <div className="w-2 h-2 bg-slate-900 rotate-45 absolute -bottom-1 left-1/2 -translate-x-1/2"></div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className={cn(
-                    "text-[10px] text-center mt-3 font-bold truncate transition-colors",
-                    isCurrentHour ? "text-primary" : "text-slate-300 group-hover:text-slate-500"
-                  )}>
-                    {i}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="mt-4">
+            <TrendChart data={trendData} />
           </div>
         </div>
         
         {/* Sidebar List Section */}
         <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm h-full max-h-[500px] overflow-hidden flex flex-col">
-          {role === 'partner' ? (
+          {role === 'super_admin' ? (
             <>
-              <SectionHeader title="門市今日業績" icon={Store} link="/admin/reports" linkText="查看報表" />
+              <SectionHeader title="合作夥伴業績" icon={Building2} link="/admin/tenants" linkText="管理客戶" />
               <div className="overflow-y-auto pr-2 space-y-4 flex-1 scrollbar-thin scrollbar-thumb-slate-200">
-                {storePerformance.map((store, i) => (
+                {performanceItems.map((item, i) => (
+                  <div key={item.id} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 hover:bg-slate-100 transition-colors group cursor-default">
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm transition-transform group-hover:scale-110",
+                        i === 0 ? "bg-amber-100 text-amber-600" :
+                        i === 1 ? "bg-slate-200 text-slate-600" :
+                        i === 2 ? "bg-orange-100 text-orange-600" :
+                        "bg-white border border-slate-200 text-slate-400"
+                      )}>
+                        {i + 1}
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-900 truncate max-w-[120px]">{item.name}</p>
+                        <p className="text-xs text-slate-500 font-medium">{item.orderCount.toLocaleString()} 筆訂單</p>
+                      </div>
+                    </div>
+                    <p className="font-black text-slate-900 group-hover:text-primary transition-colors">
+                      ${item.sales.toLocaleString()}
+                    </p>
+                  </div>
+                ))}
+                {performanceItems.length === 0 && (
+                   <div className="text-center text-slate-400 py-10">尚無業績資料</div>
+                )}
+              </div>
+            </>
+          ) : role === 'partner' ? (
+            <>
+              <SectionHeader title="門市業績表現" icon={Store} link="/admin/reports" linkText="查看報表" />
+              <div className="overflow-y-auto pr-2 space-y-4 flex-1 scrollbar-thin scrollbar-thumb-slate-200">
+                {performanceItems.map((store, i) => (
                   <div key={store.id} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 hover:bg-slate-100 transition-colors group cursor-default">
                     <div className="flex items-center gap-4">
                       <div className={cn(
@@ -349,7 +707,7 @@ export default function Overview() {
                     </p>
                   </div>
                 ))}
-                {storePerformance.length === 0 && (
+                {performanceItems.length === 0 && (
                    <div className="text-center text-slate-400 py-10">尚無門市資料</div>
                 )}
               </div>
